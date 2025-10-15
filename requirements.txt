@@ -13,3 +13,4 @@ tqdm
 av
 einops
 psutil
+torchcodec
