@@ -11,3 +11,5 @@ matplotlib
 numpy
 tqdm
 av
+einops
+psutil
