@@ -119,7 +119,7 @@ rgb/
 
 ### Download the dataset
 
-Using download script from [here](../download/ssv2.bash)
+Using download script from [here](../datasets/ssv2.bash)
 
 ```bash
 mkdir -p ./datasets/ssv2
