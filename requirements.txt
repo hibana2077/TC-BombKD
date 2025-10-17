@@ -15,3 +15,4 @@ einops
 psutil
 pytorch-metric-learning
 torchcodec
+fvcore
