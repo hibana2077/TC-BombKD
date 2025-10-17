@@ -3,6 +3,7 @@
 [VICReg: Variance-Invariance-Covariance Regularization for Self-Supervised Learning](https://arxiv.org/pdf/2105.04906.pdf){target=_blank}
 
 ```python
+from pytorch_metric_learning import losses
 losses.VICRegLoss(invariance_lambda=25, 
                 variance_mu=25, 
                 covariance_v=1, 
