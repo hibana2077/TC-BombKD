@@ -8,7 +8,7 @@ using curl
 
 ```bash
 curl -L -o hmdb51.zip https://huggingface.co/datasets/hibana2077/sample-action-reg-data/resolve/main/hmdb51.zip?download=true
-unzip hmdb51.zip -d ./datasets/hmdb51
+unzip hmdb51.zip -d ./datasets/hmdb51 # if you don't want to see unzip logs, use `unzip -q`
 ```
 
 ### Dataset Structure
