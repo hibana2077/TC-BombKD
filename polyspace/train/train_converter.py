@@ -1,4 +1,5 @@
 import json
+import pickle
 import os
 from typing import Dict, List
 
@@ -20,8 +21,24 @@ from ..losses.losses import (
 
 class FeaturePairs(Dataset):
     def __init__(self, feat_json: str, teacher_keys: List[str]) -> None:
-        with open(feat_json, "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        """
+        Loads feature pairs produced by polyspace.data.featurize.extract_features.
+
+        Supports both JSON (legacy) and PKL (current) formats.
+
+        Args:
+            feat_json: Path to features file (.pkl preferred; .json still supported).
+            teacher_keys: Names of teacher feature keys expected in each record.
+        """
+        path = feat_json
+        meta: List[Dict]
+        if path.lower().endswith(".pkl"):
+            with open(path, "rb") as f:
+                meta = pickle.load(f)
+        else:
+            with open(path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+
         self.X = torch.tensor([m["student"] for m in meta], dtype=torch.float)
         self.Ys = {k: torch.tensor([m[k] for m in meta], dtype=torch.float) for k in teacher_keys}
         self.keys = teacher_keys
@@ -103,7 +120,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Train alignment converters T_i")
-    parser.add_argument("--features", type=str, required=True)
+    parser.add_argument("--features", type=str, required=True, help="Path to features file (.pkl preferred; .json supported)")
     parser.add_argument("--teachers", type=str, nargs="+", required=True)
     parser.add_argument("--d_in", type=int, required=True)
     parser.add_argument("--d_out", type=int, required=True)

@@ -26,7 +26,7 @@ python -m polyspace.data.featurize --dataset hmdb51 --root ./datasets/hmdb51 --s
 1. Train converters T_i
 
 ```bash
-python -m polyspace.train.train_converter --features ./features/features_hmdb51_train.json --teachers videomae timesformer vivit --d_in 768 --d_out 768 --epochs 10 --batch 128 --lr 1e-3 --save_dir ./checkpoints/converters
+python -m polyspace.train.train_converter --features ./features/features_hmdb51_train.pkl --teachers videomae timesformer vivit --d_in 768 --d_out 768 --epochs 10 --batch 128 --lr 1e-3 --save_dir ./checkpoints/converters
 ```
 
 1. Train fusion head

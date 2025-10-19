@@ -1,6 +1,4 @@
 import os
-import json
-import numpy as np
 import pickle
 from typing import Dict, List
 
@@ -34,6 +32,7 @@ def extract_features(
     batch_size: int = 2,
     num_workers: int = 2,
     num_frames: int = 16,
+    use_tqdm: bool = True,
 ) -> None:
     os.makedirs(out_dir, exist_ok=True)
     ds = build_dataset(dataset_name, dataset_root, split, num_frames)
@@ -43,19 +42,22 @@ def extract_features(
     teachers = [build_backbone(t) for t in teacher_names]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    # Move models once and set to eval
+    student.to(device).eval()
+    for t in teachers:
+        t.to(device).eval()
 
     meta: List[Dict] = []
-    for batch in tqdm(dl, desc="Featurizing"):
+    iterator = tqdm(dl, desc="Featurizing") if use_tqdm else dl
+
+    for batch in iterator:
         video = batch["video"].float().div(255.0).to(device)
-        student.to(device)
-        sfeat = student(video)["feat"].cpu()
-        student.to("cpu")
-        tfeats = []
-        for t in teachers:
-            t.to(device)
-            tfeat = t(video)["feat"].cpu()
-            t.to("cpu")
-            tfeats.append(tfeat)
+        with torch.no_grad():
+            sfeat = student(video)["feat"].cpu()
+            tfeats = []
+            for t in teachers:
+                tfeat = t(video)["feat"].cpu()
+                tfeats.append(tfeat)
         paths = batch["path"]
         labels = batch["label"].tolist()
         for i, p in enumerate(paths):
@@ -68,9 +70,6 @@ def extract_features(
                 rec[name] = tfeats[j][i].tolist()
             meta.append(rec)
 
-    # out_path = os.path.join(out_dir, f"features_{dataset_name}_{split}.json")
-    # with open(out_path, "w", encoding="utf-8") as f:
-        # json.dump(meta, f)
     out_path = os.path.join(out_dir, f"features_{dataset_name}_{split}.pkl")
     with open(out_path, "wb") as f:
         pickle.dump(meta, f)
@@ -92,7 +91,6 @@ if __name__ == "__main__":
     parser.add_argument("--frames", type=int, default=16)
     parser.add_argument("--no_tqdm", action="store_true", help="Disable tqdm progress bar")
     args = parser.parse_args()
-
     extract_features(
         args.dataset,
         args.root,
@@ -103,4 +101,5 @@ if __name__ == "__main__":
         batch_size=args.batch,
         num_workers=args.workers,
         num_frames=args.frames,
+        use_tqdm=not args.no_tqdm,
     )
