@@ -80,6 +80,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, default=2)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--frames", type=int, default=16)
+    parser.add_argument("--no_tqdm", action="store_true", help="Disable tqdm progress bar")
     args = parser.parse_args()
 
     extract_features(
