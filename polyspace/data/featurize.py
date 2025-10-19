@@ -1,5 +1,7 @@
 import os
 import json
+import numpy as np
+import pickle
 from typing import Dict, List
 
 import torch
@@ -40,15 +42,20 @@ def extract_features(
     student = build_backbone(student_name)
     teachers = [build_backbone(t) for t in teacher_names]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    student.to(device)
-    for t in teachers:
-        t.to(device)
+    print(f"Using device: {device}")
 
     meta: List[Dict] = []
     for batch in tqdm(dl, desc="Featurizing"):
         video = batch["video"].float().div(255.0).to(device)
+        student.to(device)
         sfeat = student(video)["feat"].cpu()
-        tfeats = [t(video)["feat"].cpu() for t in teachers]
+        student.to("cpu")
+        tfeats = []
+        for t in teachers:
+            t.to(device)
+            tfeat = t(video)["feat"].cpu()
+            t.to("cpu")
+            tfeats.append(tfeat)
         paths = batch["path"]
         labels = batch["label"].tolist()
         for i, p in enumerate(paths):
@@ -61,9 +68,12 @@ def extract_features(
                 rec[name] = tfeats[j][i].tolist()
             meta.append(rec)
 
-    out_path = os.path.join(out_dir, f"features_{dataset_name}_{split}.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f)
+    # out_path = os.path.join(out_dir, f"features_{dataset_name}_{split}.json")
+    # with open(out_path, "w", encoding="utf-8") as f:
+        # json.dump(meta, f)
+    out_path = os.path.join(out_dir, f"features_{dataset_name}_{split}.pkl")
+    with open(out_path, "wb") as f:
+        pickle.dump(meta, f)
     print(f"Saved features to {out_path}")
 
 
