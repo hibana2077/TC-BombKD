@@ -38,37 +38,54 @@ def extract_features(
     ds = build_dataset(dataset_name, dataset_root, split, num_frames)
     dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
 
-    student = build_backbone(student_name)
-    teachers = [build_backbone(t) for t in teacher_names]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    # Move models once and set to eval
-    student.to(device).eval()
-    for t in teachers:
-        t.to(device).eval()
 
+    # We'll run multiple passes over the dataloader so only one model resides on GPU at a time.
+    # Pass 1: student
     meta: List[Dict] = []
-    iterator = tqdm(dl, desc="Featurizing") if use_tqdm else dl
-
+    student = build_backbone(student_name).eval().to(device)
+    iterator = tqdm(dl, desc=f"Featurizing [{student_name}]") if use_tqdm else dl
     for batch in iterator:
         video = batch["video"].float().div(255.0).to(device)
         with torch.no_grad():
             sfeat = student(video)["feat"].cpu()
-            tfeats = []
-            for t in teachers:
-                tfeat = t(video)["feat"].cpu()
-                tfeats.append(tfeat)
         paths = batch["path"]
         labels = batch["label"].tolist()
         for i, p in enumerate(paths):
-            rec = {
+            meta.append({
                 "path": p,
                 "label": labels[i],
                 "student": sfeat[i].tolist(),
-            }
-            for j, name in enumerate(teacher_names):
-                rec[name] = tfeats[j][i].tolist()
-            meta.append(rec)
+            })
+    # Move student off GPU and clean up
+    student.to("cpu")
+    # Clean up student model from memory
+    del student
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    # Subsequent passes: each teacher one by one
+    for tname in teacher_names:
+        if tname is None or str(tname).strip() == "":
+            continue
+        teacher = build_backbone(tname).eval().to(device)
+        iterator = tqdm(dl, desc=f"Featurizing [{tname}]") if use_tqdm else dl
+        idx_global = 0
+        for batch in iterator:
+            video = batch["video"].float().div(255.0).to(device)
+            bsz = video.shape[0]
+            with torch.no_grad():
+                tfeat = teacher(video)["feat"].cpu()
+            # Assign features back aligned with dataset order
+            for i in range(bsz):
+                meta[idx_global + i][tname] = tfeat[i].tolist()
+            idx_global += bsz
+        # Move teacher off GPU and clean up per pass
+        teacher.to("cpu")
+        del teacher
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
     out_path = os.path.join(out_dir, f"features_{dataset_name}_{split}.pkl")
     with open(out_path, "wb") as f:
