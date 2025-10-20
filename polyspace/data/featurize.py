@@ -6,8 +6,14 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .datasets import HMDB51Dataset, Diving48Dataset, SSv2Dataset, collate_fn
-from ..models.backbones import build_backbone
+try:
+    # When executed as a package module: python -m polyspace.data.featurize
+    from .datasets import HMDB51Dataset, Diving48Dataset, SSv2Dataset, collate_fn
+    from ..models.backbones import build_backbone
+except Exception:
+    # When executed directly as a script: python polyspace/data/featurize.py
+    from polyspace.data.datasets import HMDB51Dataset, Diving48Dataset, SSv2Dataset, collate_fn  # type: ignore
+    from polyspace.models.backbones import build_backbone  # type: ignore
 
 
 def build_dataset(name: str, root: str, split: str, num_frames: int):

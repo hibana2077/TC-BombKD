@@ -213,15 +213,24 @@ class SSv2Dataset(Dataset):
 
 
 def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
-    videos = [torch.from_numpy(b["video"]).permute(0, 3, 1, 2) for b in batch]  # T,H,W,3 -> T,C,H,W
-    # Pad to max T
-    max_t = max(v.shape[0] for v in videos)
+    """Collate a batch of variable-sized videos by zero-padding.
+
+    Input items use 'video' as numpy array with shape T,H,W,3 (uint8).
+    We convert to torch T,C,H,W and pad to the max T,H,W within the batch.
+    """
+    videos_tc_hw = [torch.from_numpy(b["video"]).permute(0, 3, 1, 2) for b in batch]  # T,H,W,3 -> T,C,H,W
+    # Determine max temporal and spatial sizes in the batch
+    max_t = max(v.shape[0] for v in videos_tc_hw)
+    max_h = max(v.shape[2] for v in videos_tc_hw)
+    max_w = max(v.shape[3] for v in videos_tc_hw)
+
     padded = []
-    for v in videos:
-        if v.shape[0] < max_t:
-            pad = torch.zeros((max_t - v.shape[0],) + v.shape[1:], dtype=v.dtype)
-            v = torch.cat([v, pad], dim=0)
-        padded.append(v)
+    for v in videos_tc_hw:
+        t, c, h, w = v.shape
+        out = torch.zeros((max_t, c, max_h, max_w), dtype=v.dtype)
+        out[:t, :, :h, :w] = v
+        padded.append(out)
+
     videos_t = torch.stack(padded, dim=0)  # B,T,C,H,W
     labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
     paths = [b["path"] for b in batch]
