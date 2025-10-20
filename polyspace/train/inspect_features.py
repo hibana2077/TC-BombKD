@@ -6,24 +6,31 @@ import pickle
 from collections import defaultdict
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+import numpy as np
 
 
 Number = (int, float)
 
 
 def is_sequence(x: Any) -> bool:
-    return isinstance(x, (list, tuple))
+    # Treat numpy arrays as sequences for our purposes
+    return isinstance(x, (list, tuple, np.ndarray))
 
 
 def is_numeric(x: Any) -> bool:
     if isinstance(x, Number):
         return True
+    if isinstance(x, np.ndarray) and x.dtype.kind in {"f", "i", "u"}:  # float, signed int, unsigned int
+        return True
     if is_sequence(x) and len(x) > 0:
         # Check a few leaves
         probe = x
         depth = 0
-        while is_sequence(probe) and len(probe) > 0 and depth < 3:
-            probe = probe[0]
+        while is_sequence(probe) and (len(probe) if not isinstance(probe, np.ndarray) else probe.size) > 0 and depth < 3:
+            if isinstance(probe, np.ndarray):
+                probe = probe.reshape(-1)[0]
+            else:
+                probe = probe[0]
             depth += 1
         return isinstance(probe, Number)
     return False
@@ -41,6 +48,8 @@ def infer_shape(x: Any) -> Tuple[Optional[Tuple[int, ...]], bool]:
     def shape_of(seq: Any) -> Optional[Tuple[int, ...]]:
         if isinstance(seq, Number):
             return tuple()
+        if isinstance(seq, np.ndarray):
+            return tuple(seq.shape)
         if not is_sequence(seq):
             return None
         n = len(seq)
@@ -63,6 +72,10 @@ def infer_shape(x: Any) -> Tuple[Optional[Tuple[int, ...]], bool]:
 def flatten(x: Any) -> Iterable[float]:
     if isinstance(x, Number):
         yield float(x)
+    elif isinstance(x, np.ndarray):
+        # Use flat iterator for performance
+        for v in x.flat:
+            yield float(v)
     elif is_sequence(x):
         for xi in x:
             yield from flatten(xi)
@@ -319,7 +332,7 @@ def print_report(summary: Dict[str, Any], meta: List[Dict[str, Any]], sample: in
 
 def main():
     parser = argparse.ArgumentParser(description="Inspect collected feature files (JSON/PKL)")
-    parser.add_argument("--features", "--path", dest="path", type=str, required=True, help="Path to features .pkl or .json")
+    parser.add_argument("--features", "--path", dest="path", type=str, required=True, help="Path to features (.pkl/.json), index (.index.json) or directory of shards")
     parser.add_argument("--limit", type=int, default=0, help="Only scan first N records (0=all)")
     parser.add_argument("--keys", nargs="*", default=None, help="Only include these keys (default: all)")
     parser.add_argument("--no-stats", action="store_true", help="Skip computing stats for speed")
@@ -328,8 +341,8 @@ def main():
 
     args = parser.parse_args()
 
-    if not os.path.isfile(args.path):
-        raise FileNotFoundError(f"Features file not found: {args.path}")
+    if not (os.path.isfile(args.path) or os.path.isdir(args.path)):
+        raise FileNotFoundError(f"Features path not found: {args.path}")
 
     meta = load_meta(args.path, limit=args.limit)
     if not isinstance(meta, list) or not all(isinstance(m, dict) for m in meta):

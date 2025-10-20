@@ -16,4 +16,4 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 # python3 -m polyspace.data.featurize --dataset hmdb51 --root ./datasets/hmdb51 --split train --out ./features --student vjepa2 --teachers videomae timesformer vivit --batch 2 --workers 2 --frames 16 >> T002.log 2>&1
-python3 -m polyspace.train.inspect_features --features ./features/features_hmdb51_train.pkl --limit 100 --sample 3 --json_out features_summary.json >> T002.log 2>&1
+python3 -m polyspace.train.inspect_features --features ./features/features_hmdb51_train.index.json --limit 100 --sample 3 >> T002.log 2>&1
