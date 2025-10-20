@@ -15,4 +15,5 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
-python3 ./polyspace/data/featurize.py --dataset hmdb51 --root ./datasets/hmdb51 --split train --out ./features --student vjepa2 --teachers videomae timesformer vivit --batch 2 --workers 2 --frames 16 >> T001.log 2>&1
+# python3 ./polyspace/data/featurize.py --dataset hmdb51 --root ./datasets/hmdb51 --split train --out ./features --student vjepa2 --teachers videomae timesformer vivit --batch 2 --workers 2 --frames 16 >> T001.log 2>&1
+python3 -m polyspace.data.featurize --dataset hmdb51 --root ./datasets/hmdb51 --split train --out ./features --student vjepa2 --teachers videomae timesformer vivit --batch 2 --workers 2 --frames 16 >> T001.log 2>&1
