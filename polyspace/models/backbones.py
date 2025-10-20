@@ -54,27 +54,35 @@ class HFBackboneWrapper(FeatureBackbone):
     """
 
     def __init__(self, model_name: str, feat_dim: Optional[int] = None, device: Optional[str] = None) -> None:
+        # IMPORTANT: Initialize nn.Module BEFORE assigning any submodules (e.g., self.model)
+        # Use a placeholder feat dim and update later once the HF model is loaded.
+        super().__init__(feat_dim or 1)
+
         if not _try_import_transformers():
             # Fallback to identity if transformers missing
-            super().__init__(feat_dim or 768)
             self.fallback = IdentityBackbone(3, feat_dim or 768)
+            self.feat_dim = feat_dim or 768
             self._use_fallback = True
             return
         from transformers import AutoModel, AutoImageProcessor, AutoVideoProcessor
 
         self.model_name = model_name
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.model = AutoModel.from_pretrained(model_name).to(self.device)
-        # Choose processor type
         try:
-            self.processor = AutoVideoProcessor.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name).to(self.device)
+            # Choose processor type
+            try:
+                self.processor = AutoVideoProcessor.from_pretrained(model_name)
+            except Exception:
+                self.processor = AutoImageProcessor.from_pretrained(model_name)
+            # Probe and set the correct feature dim now that model is available
+            self.feat_dim = feat_dim or getattr(self.model.config, "hidden_size", 768)
+            self._use_fallback = False
         except Exception:
-            self.processor = AutoImageProcessor.from_pretrained(model_name)
-
-        # Probe feature dim
-        feat_dim = feat_dim or getattr(self.model.config, "hidden_size", 768)
-        super().__init__(feat_dim)
-        self._use_fallback = False
+            # If model cannot be loaded (e.g., offline cache miss), fallback gracefully
+            self.fallback = IdentityBackbone(3, feat_dim or 768)
+            self.feat_dim = feat_dim or 768
+            self._use_fallback = True
 
     @torch.no_grad()
     def forward(self, video: torch.Tensor) -> Dict[str, torch.Tensor]:
