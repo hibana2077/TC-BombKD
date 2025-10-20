@@ -8,7 +8,7 @@ class FeatureBackbone(nn.Module):
     """Base interface for backbones producing clip-level features.
 
     forward(video): expects FloatTensor B,T,C,H,W in [0,1] range.
-    Returns: dict with 'feat': Tensor[B, D]
+    Returns: dict with 'feat': Tensor[B, N, D] where N is the token length
     """
 
     def __init__(self, feat_dim: int) -> None:
@@ -35,8 +35,10 @@ class IdentityBackbone(FeatureBackbone):
         # pool spatial to 1x1, keep time dim
         x = self.pool(x)  # B,C,T,1,1
         x = x.squeeze(-1).squeeze(-1).mean(dim=2)  # B,C
-        feat = self.proj(x)
-        return {"feat": feat}
+        feat = self.proj(x)  # B,D
+        # Return as a single-token sequence to match [B, N, D]
+        feat_tokens = feat.unsqueeze(1)  # B,1,D
+        return {"feat": feat_tokens}
 
 
 def _try_import_transformers():
@@ -91,7 +93,16 @@ class HFBackboneWrapper(FeatureBackbone):
         # Expect video in [0,1]; convert to list of frames per sample
         b, t, c, h, w = video.shape
         frames = video.mul(255).clamp(0, 255).byte().cpu().permute(0, 1, 3, 4, 2)  # B,T,H,W,3 uint8
-        feats = []
+        feats = []  # list of tensors shaped [1, N, D]
+
+        def _has_cls_token(model_name: str) -> bool:
+            name = model_name.lower()
+            # Known cases: TimeSformer, ViViT have CLS; VideoMAE no CLS; V-JEPA2 no CLS
+            return any(k in name for k in ["timesformer", "vivit"]) and not any(
+                k in name for k in ["videomae", "vjepa"]
+            )
+
+        has_cls = _has_cls_token(self.model_name)
         for i in range(b):
             # Prepare a single video as ndarray (T,H,W,3) uint8
             vid_np = frames[i].numpy()
@@ -105,21 +116,27 @@ class HFBackboneWrapper(FeatureBackbone):
             out = self.model(**inputs)
             last = getattr(out, "last_hidden_state", None)
             if last is not None:
-                # Use CLS token if present, else mean pool tokens
-                if last.dim() == 3:
-                    cls = last[:, 0]
-                    feat = cls
-                else:
-                    feat = last.mean(dim=tuple(range(1, last.dim())))
+                # last expected shape: [1, N, D]
+                tokens = last
+                # Drop CLS token if the model uses it
+                if has_cls and tokens.size(1) > 0:
+                    tokens = tokens[:, 1:, :]
+                feat = tokens
             else:
                 pooled = getattr(out, "pooler_output", None)
                 if pooled is None:
-                    # Fallback to zeros
-                    feat = torch.zeros((1, self.feat_dim), device=self.device)
+                    # Fallback to zeros: create a single-token sequence
+                    feat = torch.zeros((1, 1, self.feat_dim), device=self.device)
                 else:
-                    feat = pooled
+                    # Wrap pooled vector as single-token sequence
+                    if pooled.dim() == 2:
+                        feat = pooled.unsqueeze(1)  # [1,1,D]
+                    else:
+                        # Ensure it is [1, N, D]
+                        feat = pooled
             feats.append(feat.detach().cpu())
-        feat = torch.cat(feats, dim=0)
+        # Concatenate along the batch dimension. All samples should have same N for a given model.
+        feat = torch.cat(feats, dim=0)  # [B, N, D]
         return {"feat": feat}
 
 

@@ -48,20 +48,21 @@ def extract_features(
     print(f"Using device: {device}")
 
     # We'll run multiple passes over the dataloader so only one model resides on GPU at a time.
-    # Pass 1: student
+    # Pass 1: student — expect features with shape [B, N, D]; drop CLS token inside backbone when applicable
     meta: List[Dict] = []
     student = build_backbone(student_name).eval().to(device)
     iterator = tqdm(dl, desc=f"Featurizing [{student_name}]") if use_tqdm else dl
     for batch in iterator:
         video = batch["video"].float().div(255.0).to(device)
         with torch.no_grad():
-            sfeat = student(video)["feat"].cpu()
+            sfeat = student(video)["feat"].cpu()  # [B, N, D]
         paths = batch["path"]
         labels = batch["label"].tolist()
         for i, p in enumerate(paths):
             meta.append({
                 "path": p,
                 "label": labels[i],
+                # store tokens per sample (N,D)
                 "student": sfeat[i].tolist(),
             })
     # Move student off GPU and clean up
@@ -82,10 +83,10 @@ def extract_features(
             video = batch["video"].float().div(255.0).to(device)
             bsz = video.shape[0]
             with torch.no_grad():
-                tfeat = teacher(video)["feat"].cpu()
+                tfeat = teacher(video)["feat"].cpu()  # [B, N, D]
             # Assign features back aligned with dataset order
             for i in range(bsz):
-                meta[idx_global + i][tname] = tfeat[i].tolist()
+                meta[idx_global + i][tname] = tfeat[i].tolist()  # (N,D)
             idx_global += bsz
         # Move teacher off GPU and clean up per pass
         teacher.to("cpu")
