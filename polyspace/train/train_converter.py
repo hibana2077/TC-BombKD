@@ -27,12 +27,30 @@ class FeaturePairs(Dataset):
         Supports both JSON (legacy) and PKL (current) formats.
 
         Args:
-            feat_json: Path to features file (.pkl preferred; .json still supported).
+            feat_json: Path to features file (.pkl preferred; .json still supported). Also accepts
+                       - an index JSON produced by sharded extraction (suffix .index.json)
+                       - a directory containing shard pkl files (features_*_shard_XXXXX.pkl)
             teacher_keys: Names of teacher feature keys expected in each record.
         """
         path = feat_json
         meta: List[Dict]
-        if path.lower().endswith(".pkl"):
+        if os.path.isdir(path):
+            # load all shard pkls in directory
+            files = sorted([f for f in os.listdir(path) if f.endswith('.pkl') and '_shard_' in f])
+            meta = []
+            for fn in files:
+                with open(os.path.join(path, fn), 'rb') as f:
+                    meta.extend(pickle.load(f))
+        elif path.lower().endswith('.index.json'):
+            with open(path, 'r', encoding='utf-8') as f:
+                idx = json.load(f)
+            base_dir = os.path.dirname(path)
+            meta = []
+            for sh in idx.get('shards', []):
+                fp = os.path.join(base_dir, sh['file'])
+                with open(fp, 'rb') as f:
+                    meta.extend(pickle.load(f))
+        elif path.lower().endswith(".pkl"):
             with open(path, "rb") as f:
                 meta = pickle.load(f)
         else:

@@ -126,7 +126,33 @@ class Stat:
         }
 
 
-def load_meta(path: str) -> List[Dict[str, Any]]:
+def load_meta(path: str, limit: int = 0) -> List[Dict[str, Any]]:
+    # Directory of shards
+    if os.path.isdir(path):
+        metas: List[Dict[str, Any]] = []
+        files = sorted([f for f in os.listdir(path) if f.endswith('.pkl') and '_shard_' in f])
+        for fn in files:
+            with open(os.path.join(path, fn), 'rb') as f:
+                part = pickle.load(f)
+            metas.extend(part)
+            if limit and len(metas) >= limit:
+                return metas[:limit]
+        return metas
+    # Index JSON
+    if path.lower().endswith('.index.json'):
+        with open(path, 'r', encoding='utf-8') as f:
+            idx = json.load(f)
+        base_dir = os.path.dirname(path)
+        metas: List[Dict[str, Any]] = []
+        for sh in idx.get('shards', []):
+            fp = os.path.join(base_dir, sh['file'])
+            with open(fp, 'rb') as f:
+                part = pickle.load(f)
+            metas.extend(part)
+            if limit and len(metas) >= limit:
+                return metas[:limit]
+        return metas
+    # Single files
     if path.lower().endswith(".pkl"):
         with open(path, "rb") as f:
             return pickle.load(f)
@@ -305,7 +331,7 @@ def main():
     if not os.path.isfile(args.path):
         raise FileNotFoundError(f"Features file not found: {args.path}")
 
-    meta = load_meta(args.path)
+    meta = load_meta(args.path, limit=args.limit)
     if not isinstance(meta, list) or not all(isinstance(m, dict) for m in meta):
         raise ValueError("Features file must contain a list of dict records")
 
