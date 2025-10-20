@@ -93,7 +93,15 @@ class HFBackboneWrapper(FeatureBackbone):
         frames = video.mul(255).clamp(0, 255).byte().cpu().permute(0, 1, 3, 4, 2)  # B,T,H,W,3 uint8
         feats = []
         for i in range(b):
-            inputs = self.processor(images=[f.numpy() for f in frames[i]], return_tensors="pt").to(self.device)
+            # Prepare a single video as ndarray (T,H,W,3) uint8
+            vid_np = frames[i].numpy()
+            # Most HF video processors expect the keyword 'videos'. Some legacy
+            # processors might still accept 'images' (e.g., *ImageProcessor* for video).
+            try:
+                inputs = self.processor(videos=[vid_np], return_tensors="pt").to(self.device)
+            except TypeError:
+                # Fallback: try images=list of frames
+                inputs = self.processor(images=[f for f in vid_np], return_tensors="pt").to(self.device)
             out = self.model(**inputs)
             last = getattr(out, "last_hidden_state", None)
             if last is not None:
