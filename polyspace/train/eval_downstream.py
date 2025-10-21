@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset
 from ..models.backbones import build_backbone
-from ..models.converters import ResidualMLPAlign
+from ..models.converters import build_converter
 from ..models.fusion_head import ResidualGatedFusion
 from ..utils.metrics import topk_accuracy, estimate_vram_mb, estimate_flops_note
 
@@ -23,10 +23,20 @@ def build_dataset(name: str, root: str, split: str, num_frames: int):
     raise ValueError(f"Unknown dataset {name}")
 
 
-def load_converters(ckpt_path: str, keys: List[str]) -> ResidualMLPAlign:
+def load_converters(ckpt_path: str, keys: List[str]):
     ckpt = torch.load(ckpt_path, map_location="cpu")
     d_in, d_out = ckpt.get("d_in"), ckpt.get("d_out")
-    modules = torch.nn.ModuleDict({k: ResidualMLPAlign(d_in, d_out) for k in keys})
+    kind = ckpt.get("kind", "b")
+    teacher_lens = ckpt.get("teacher_lens", {}) or {}
+    token_k = ckpt.get("token_k", None)
+    modules = torch.nn.ModuleDict()
+    for k in keys:
+        kwargs = {}
+        if k in teacher_lens:
+            kwargs["target_len"] = int(teacher_lens[k])
+        if token_k is not None:
+            kwargs["K"] = int(token_k)
+        modules[k] = build_converter(kind, d_in, d_out, **kwargs)
     modules.load_state_dict(ckpt["state_dict"], strict=False)
     for p in modules.parameters():
         p.requires_grad_(False)
