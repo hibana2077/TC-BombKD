@@ -19,12 +19,12 @@ cd ../..
 # python3 -m polyspace.train.inspect_features --features ./features/features_hmdb51_train.index.json --limit 100 --sample 3 >> T002.log 2>&1
 python3 -m polyspace.train.train_converter \
 	--features ./features/features_hmdb51_train.index.json \
-	--teachers videomae\
-	--teacher_lens 1568\
+	--teachers videomae \
+	--teacher_lens 1568 \
 	--d_in 1024 --d_out 768 \
 	--kind a \
 	--epochs 10 \
 	--batch 32 \
-	--workers 2 \
+	--workers 1 \
     --log_every 20 \
 	--save_dir ./checkpoints/converters_a >> T003.log 2>&1
