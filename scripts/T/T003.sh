@@ -19,8 +19,8 @@ cd ../..
 # python3 -m polyspace.train.inspect_features --features ./features/features_hmdb51_train.index.json --limit 100 --sample 3 >> T002.log 2>&1
 python3 -m polyspace.train.train_converter \
 	--features ./features/features_hmdb51_train.index.json \
-	--teachers videomae timesformer vivit \
-	--teacher_lens 1568 3136 1 \
+	--teachers videomae\
+	--teacher_lens 1568\
 	--d_in 1024 --d_out 768 \
 	--kind a \
 	--epochs 10 \
