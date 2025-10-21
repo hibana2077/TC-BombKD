@@ -22,50 +22,134 @@ from ..losses.losses import (
 class FeaturePairs(Dataset):
     def __init__(self, feat_json: str, teacher_keys: List[str]) -> None:
         """
-        Loads feature pairs produced by polyspace.data.featurize.extract_features.
+        Memory-efficient loader for feature pairs produced by polyspace.data.featurize.extract_features.
 
-        Supports both JSON (legacy) and PKL (current) formats.
+        Supports streaming from sharded index (.index.json) or a directory of shard PKLs without
+        loading the entire dataset into RAM. Legacy single-file .pkl/.json are also supported (will
+        load into memory, use only for small datasets).
 
         Args:
-            feat_json: Path to features file (.pkl preferred; .json still supported). Also accepts
-                       - an index JSON produced by sharded extraction (suffix .index.json)
-                       - a directory containing shard pkl files (features_*_shard_XXXXX.pkl)
+            feat_json: Path to features entry point. Accepts:
+                       - index JSON produced by sharded extraction (suffix .index.json)
+                       - directory containing shard PKL files (features_*_shard_XXXXX.pkl)
+                       - single .pkl or .json file (legacy, loads fully into RAM)
             teacher_keys: Names of teacher feature keys expected in each record.
         """
+        self.path = feat_json
+        self.teacher_keys = teacher_keys
+
+        self._mode = ""  # one of: index, dir, pkl, json
+        self._index = None  # type: Optional[Dict]
+        self._base_dir = None  # type: Optional[str]
+        self._num_samples = 0
+        # cache one shard at a time to keep RAM low
+        self._cache_shard_path: Optional[str] = None
+        self._cache_records: Optional[List[Dict]] = None
+
         path = feat_json
-        meta: List[Dict]
         if os.path.isdir(path):
-            # load all shard pkls in directory
-            files = sorted([f for f in os.listdir(path) if f.endswith('.pkl') and '_shard_' in f])
-            meta = []
-            for fn in files:
-                with open(os.path.join(path, fn), 'rb') as f:
-                    meta.extend(pickle.load(f))
+            # Prefer an index json inside the directory if present
+            cand = [f for f in os.listdir(path) if f.endswith('.index.json')]
+            if cand:
+                index_file = os.path.join(path, sorted(cand)[0])
+                with open(index_file, 'r', encoding='utf-8') as f:
+                    self._index = json.load(f)
+                self._mode = "index"
+                self._base_dir = path
+                self._num_samples = int(self._index.get("num_samples", 0))
+            else:
+                # Fallback: directory of shard pkls without explicit index. Build a lightweight
+                # index by scanning shard lengths. This reads each shard once but does not retain it.
+                files = sorted([f for f in os.listdir(path) if f.endswith('.pkl') and '_shard_' in f])
+                starts = []
+                counts = []
+                start = 0
+                for fn in files:
+                    shard_path = os.path.join(path, fn)
+                    with open(shard_path, 'rb') as f:
+                        recs = pickle.load(f)
+                    cnt = len(recs)
+                    starts.append(start)
+                    counts.append(cnt)
+                    start += cnt
+                self._index = {"shards": [{"file": files[i], "start": starts[i], "count": counts[i]} for i in range(len(files))],
+                               "num_samples": start}
+                self._mode = "index"
+                self._base_dir = path
+                self._num_samples = start
         elif path.lower().endswith('.index.json'):
             with open(path, 'r', encoding='utf-8') as f:
-                idx = json.load(f)
-            base_dir = os.path.dirname(path)
-            meta = []
-            for sh in idx.get('shards', []):
-                fp = os.path.join(base_dir, sh['file'])
-                with open(fp, 'rb') as f:
-                    meta.extend(pickle.load(f))
-        elif path.lower().endswith(".pkl"):
-            with open(path, "rb") as f:
-                meta = pickle.load(f)
+                self._index = json.load(f)
+            self._mode = "index"
+            self._base_dir = os.path.dirname(path)
+            self._num_samples = int(self._index.get("num_samples", 0))
+        elif path.lower().endswith('.pkl'):
+            # Legacy single file — will load fully; use only for small datasets
+            with open(path, 'rb') as f:
+                self._records = pickle.load(f)  # type: ignore[attr-defined]
+            self._mode = "pkl"
+            self._num_samples = len(self._records)  # type: ignore[attr-defined]
         else:
-            with open(path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
+            # Legacy json — will load fully; use only for small datasets
+            with open(path, 'r', encoding='utf-8') as f:
+                self._records = json.load(f)  # type: ignore[attr-defined]
+            self._mode = "json"
+            self._num_samples = len(self._records)  # type: ignore[attr-defined]
 
-        self.X = torch.tensor([m["student"] for m in meta], dtype=torch.float)
-        self.Ys = {k: torch.tensor([m[k] for m in meta], dtype=torch.float) for k in teacher_keys}
-        self.keys = teacher_keys
+        if self._mode == "index" and (self._index is None or not self._index.get("shards")):
+            raise ValueError("Index mode requires non-empty 'shards' list in index JSON or directory scan")
 
     def __len__(self) -> int:
-        return self.X.shape[0]
+        return int(self._num_samples)
+
+    def _load_shard(self, shard_rel_path: str) -> None:
+        """Load a shard file into the local cache if not already loaded."""
+        shard_path = shard_rel_path
+        if self._base_dir is not None:
+            shard_path = os.path.join(self._base_dir, shard_rel_path)
+        if self._cache_shard_path == shard_path and self._cache_records is not None:
+            return
+        with open(shard_path, 'rb') as f:
+            self._cache_records = pickle.load(f)
+        self._cache_shard_path = shard_path
+
+    def _get_index_shard(self, idx: int) -> Dict:
+        # Linear scan is OK because shards are relatively few; could be optimized with bisect.
+        assert self._index is not None
+        for sh in self._index["shards"]:
+            start = int(sh["start"]) if not isinstance(sh["start"], str) else int(sh["start"])  # robust cast
+            cnt = int(sh["count"]) if not isinstance(sh["count"], str) else int(sh["count"])  # robust cast
+            if start <= idx < start + cnt:
+                return sh
+        raise IndexError(idx)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        return {"x": self.X[idx], **{k: self.Ys[k][idx] for k in self.keys}}
+        if self._mode == "index":
+            sh = self._get_index_shard(idx)
+            local_idx = idx - int(sh["start"])  # type: ignore[index]
+            self._load_shard(sh["file"])  # type: ignore[index]
+            assert self._cache_records is not None
+            rec = self._cache_records[local_idx]
+        else:
+            # legacy fully loaded modes
+            rec = self._records[idx]  # type: ignore[attr-defined]
+
+        # Preserve dtype and avoid extra copies when underlying storage is numpy
+        stu = rec["student"]
+        if hasattr(stu, "__array__"):
+            x = torch.from_numpy(stu)  # type: ignore[arg-type]
+        else:
+            x = torch.as_tensor(stu)
+        out = {"x": x}
+        for k in self.teacher_keys:
+            if k not in rec:
+                raise KeyError(f"Teacher key '{k}' missing in record {idx}")
+            val = rec[k]
+            if hasattr(val, "__array__"):
+                out[k] = torch.from_numpy(val)  # type: ignore[arg-type]
+            else:
+                out[k] = torch.as_tensor(val)
+        return out
 
 
 def _pool_sequence(x: torch.Tensor) -> torch.Tensor:
@@ -99,10 +183,12 @@ def train_converters(
     kind: str = "mlp",
     teacher_target_lens: Optional[Dict[str, int]] = None,
     token_k: Optional[int] = None,
+    workers: int = 2,
+    pin_memory: bool = False,
 ):
     os.makedirs(save_dir, exist_ok=True)
     ds = FeaturePairs(features_path, teacher_keys)
-    dl = DataLoader(ds, batch_size=batch_size, shuffle=True)
+    dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=pin_memory)
 
     converters = nn.ModuleDict()
     for k in teacher_keys:
@@ -131,11 +217,11 @@ def train_converters(
         pbar = tqdm(dl, desc=f"Epoch {ep}")
         total = 0.0
         for batch in pbar:
-            x = batch["x"].to(device)
+            x = batch["x"].to(device, non_blocking=True)
             loss_sum = 0.0
             opt.zero_grad()
             for k in teacher_keys:
-                y = batch[k].to(device)
+                y = batch[k].to(device, non_blocking=True)
                 y_hat = converters[k](x)
                 li = 0.0
                 if loss_weights.get("l2", 0) > 0:
@@ -182,6 +268,8 @@ if __name__ == "__main__":
     parser.add_argument("--d_out", type=int, required=True)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch", type=int, default=128)
+    parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--pin_memory", action="store_true", help="Pin CPU memory for faster H2D copies (uses more host RAM)")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--save_dir", type=str, default="./checkpoints/converters")
     parser.add_argument("--kind", type=str, default="mlp", choices=[
@@ -207,6 +295,8 @@ if __name__ == "__main__":
         args.d_out,
         epochs=args.epochs,
         batch_size=args.batch,
+        workers=args.workers,
+        pin_memory=args.pin_memory,
         lr=args.lr,
         save_dir=args.save_dir,
         kind=args.kind,
