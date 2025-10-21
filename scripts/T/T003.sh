@@ -26,5 +26,5 @@ python3 -m polyspace.train.train_converter \
 	--epochs 10 \
 	--batch 32 \
 	--workers 1 \
-    --log_every 20 \
+    --log_every 1 \
 	--save_dir ./checkpoints/converters_a >> T003.log 2>&1
