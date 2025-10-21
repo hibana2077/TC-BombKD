@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 import time
+from contextlib import contextmanager
+from collections import defaultdict
 
 from ..models.converters import build_converter
 from ..losses.losses import (
@@ -258,41 +260,101 @@ def train_converters(
 
     scaler = torch.cuda.amp.GradScaler(enabled=amp)
 
+    # --- Timing utilities ---------------------------------------------------
+    class StepTimer:
+        def __init__(self, sync_cuda: bool = False) -> None:
+            self.sync_cuda = sync_cuda and torch.cuda.is_available()
+            self.totals = defaultdict(float)  # name -> seconds
+            self.counts = defaultdict(int)    # name -> times entered
+
+        @contextmanager
+        def section(self, name: str):
+            if self.sync_cuda:
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            try:
+                yield
+            finally:
+                if self.sync_cuda:
+                    torch.cuda.synchronize()
+                dt = time.perf_counter() - t0
+                self.totals[name] += dt
+                self.counts[name] += 1
+
+        def merge_from(self, other: "StepTimer") -> None:
+            for k, v in other.totals.items():
+                self.totals[k] += v
+            for k, v in other.counts.items():
+                self.counts[k] += v
+
+        def report_lines(self, total_time: Optional[float] = None) -> List[str]:
+            items = sorted(self.totals.items(), key=lambda kv: kv[1], reverse=True)
+            if total_time is None:
+                total_time = sum(self.totals.values())
+            lines = []
+            for k, v in items:
+                c = self.counts.get(k, 0)
+                pct = (100.0 * v / total_time) if total_time > 0 else 0.0
+                avg = (v / max(1, c)) if c > 0 else 0.0
+                lines.append(f"- {k:16s} total {v:8.3f}s | {pct:5.1f}% | avg/occ {avg:7.4f}s | n={c}")
+            return lines
+
+    overall_timer = StepTimer(sync_cuda=(device.type == "cuda"))
+    global_start = time.perf_counter()
+
     for ep in range(1, epochs + 1):
         converters.train()
         total = 0.0
         running = 0.0
         count = 0
         start_t = time.time()
-        for bi, batch in enumerate(dl, start=1):
-            if max_batches_per_epoch is not None and bi > max_batches_per_epoch:
+
+        epoch_timer = StepTimer(sync_cuda=(device.type == "cuda"))
+
+        it = iter(dl)
+        bi = 0
+        while True:
+            if max_batches_per_epoch is not None and bi >= max_batches_per_epoch:
                 break
+            with epoch_timer.section("data_load"):
+                try:
+                    batch = next(it)
+                except StopIteration:
+                    break
+            bi += 1
             # Ensure inputs/targets match the converters' parameter dtype to avoid matmul dtype errors
             param_dtype = next(converters.parameters()).dtype
-            x = batch["x"].to(device, non_blocking=True).to(param_dtype)
+            with epoch_timer.section("to_device"):
+                x = batch["x"].to(device, non_blocking=True).to(param_dtype)
+                ys = {k: batch[k].to(device, non_blocking=True).to(param_dtype) for k in teacher_keys}
+
             opt.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, enabled=amp):
                 loss_sum = 0.0
                 for k in teacher_keys:
-                    y = batch[k].to(device, non_blocking=True).to(param_dtype)
-                    y_hat = converters[k](x)
-                    li = 0.0
-                    if loss_weights.get("l2", 0) > 0:
-                        li = li + loss_weights["l2"] * l2(y_hat, y)
-                    if loss_weights.get("cos", 0) > 0:
-                        li = li + loss_weights["cos"] * cos(y_hat, y)
-                    if loss_weights.get("nce", 0) > 0:
-                        li = li + loss_weights["nce"] * nce(_pool_sequence(y_hat), _pool_sequence(y))
-                    if loss_weights.get("vic", 0) > 0:
-                        li = li + loss_weights["vic"] * vic(_pool_sequence(y_hat), _pool_sequence(y))
-                    if loss_weights.get("bar", 0) > 0:
-                        li = li + loss_weights["bar"] * bar(_pool_sequence(y_hat), _pool_sequence(y))
+                    with epoch_timer.section("forward"):
+                        y_hat = converters[k](x)
+                    with epoch_timer.section("loss"):
+                        li = 0.0
+                        y = ys[k]
+                        if loss_weights.get("l2", 0) > 0:
+                            li = li + loss_weights["l2"] * l2(y_hat, y)
+                        if loss_weights.get("cos", 0) > 0:
+                            li = li + loss_weights["cos"] * cos(y_hat, y)
+                        if loss_weights.get("nce", 0) > 0:
+                            li = li + loss_weights["nce"] * nce(_pool_sequence(y_hat), _pool_sequence(y))
+                        if loss_weights.get("vic", 0) > 0:
+                            li = li + loss_weights["vic"] * vic(_pool_sequence(y_hat), _pool_sequence(y))
+                        if loss_weights.get("bar", 0) > 0:
+                            li = li + loss_weights["bar"] * bar(_pool_sequence(y_hat), _pool_sequence(y))
                     # No special regularizer for new converters by default
                     loss_sum = loss_sum + li
 
-            scaler.scale(loss_sum).backward()
-            scaler.step(opt)
-            scaler.update()
+            with epoch_timer.section("backward"):
+                scaler.scale(loss_sum).backward()
+            with epoch_timer.section("optim_step"):
+                scaler.step(opt)
+                scaler.update()
 
             loss_val = float(loss_sum.item())
             total += loss_val
@@ -313,21 +375,35 @@ def train_converters(
 
         # Save checkpoint per epoch
         ckpt_path = os.path.join(save_dir, f"converters_ep{ep}.pt")
-        torch.save(
-            {
-                "state_dict": converters.state_dict(),
-                "keys": teacher_keys,
-                "d_in": d_in,
-                "d_out": d_out,
-                "kind": kind,
-                "teacher_lens": teacher_target_lens,
-                "token_k": token_k,
-            },
-            ckpt_path,
-        )
+        with epoch_timer.section("checkpoint_save"):
+            torch.save(
+                {
+                    "state_dict": converters.state_dict(),
+                    "keys": teacher_keys,
+                    "d_in": d_in,
+                    "d_out": d_out,
+                    "kind": kind,
+                    "teacher_lens": teacher_target_lens,
+                    "token_k": token_k,
+                },
+                ckpt_path,
+            )
         denom = min(len(dl), max_batches_per_epoch) if max_batches_per_epoch else len(dl)
         print(f"Saved {ckpt_path}; epoch avg loss={total / max(1, denom):.4f}")
 
+        # Timing report for the epoch
+        epoch_wall = time.perf_counter() - start_t
+        print(f"\n[Timing] Epoch {ep} wall-clock: {epoch_wall:.3f}s (batches: {count})")
+        for line in epoch_timer.report_lines(total_time=epoch_wall):
+            print(line)
+        print("")
+        overall_timer.merge_from(epoch_timer)
+
+    overall_wall = time.perf_counter() - global_start
+    print(f"[Timing] Overall wall-clock: {overall_wall:.3f}s across {epochs} epoch(s)")
+    for line in overall_timer.report_lines(total_time=overall_wall):
+        print(line)
+    print("")
 
 if __name__ == "__main__":
     import argparse
@@ -354,6 +430,11 @@ if __name__ == "__main__":
     parser.add_argument("--log_every", type=int, default=50, help="Print training log every N batches instead of tqdm")
     parser.add_argument("--max_batches_per_epoch", type=int, default=None, help="Limit number of batches per epoch to speed up runs")
     parser.add_argument("--no_amp", action="store_true", help="Disable mixed precision (AMP)")
+    parser.add_argument(
+        "--timing_no_cuda_sync",
+        action="store_true",
+        help="Do not synchronize CUDA around timing sections (lower overhead, less accurate)",
+    )
     args = parser.parse_args()
 
     lens_map = None
