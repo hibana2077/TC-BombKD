@@ -217,11 +217,13 @@ def train_converters(
         pbar = tqdm(dl, desc=f"Epoch {ep}")
         total = 0.0
         for batch in pbar:
-            x = batch["x"].to(device, non_blocking=True)
+            # Ensure inputs/targets match the converters' parameter dtype to avoid matmul dtype errors
+            param_dtype = next(converters.parameters()).dtype
+            x = batch["x"].to(device, non_blocking=True).to(param_dtype)
             loss_sum = 0.0
             opt.zero_grad()
             for k in teacher_keys:
-                y = batch[k].to(device, non_blocking=True)
+                y = batch[k].to(device, non_blocking=True).to(param_dtype)
                 y_hat = converters[k](x)
                 li = 0.0
                 if loss_weights.get("l2", 0) > 0:
