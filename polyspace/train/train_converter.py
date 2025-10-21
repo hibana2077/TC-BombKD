@@ -271,7 +271,7 @@ def train_converters(
             param_dtype = next(converters.parameters()).dtype
             x = batch["x"].to(device, non_blocking=True).to(param_dtype)
             opt.zero_grad(set_to_none=True)
-            with torch.cuda.amp.autocast(enabled=amp):
+            with torch.autocast(device_type=device.type, enabled=amp):
                 loss_sum = 0.0
                 for k in teacher_keys:
                     y = batch[k].to(device, non_blocking=True).to(param_dtype)
