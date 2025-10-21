@@ -16,5 +16,6 @@ psutil
 pytorch-metric-learning
 torchcodec
 fvcore
+thop
 transformers
 huggingface_hub
