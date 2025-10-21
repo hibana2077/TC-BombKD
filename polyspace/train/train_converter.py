@@ -260,7 +260,7 @@ def train_converters(
 
     # Simplified timing: only measure the very first batch (load -> train -> backward) and print immediately
     first_timing_done = False
-
+    print("Starting converter training...")
     for ep in range(1, epochs + 1):
         converters.train()
         total = 0.0
