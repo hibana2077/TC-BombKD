@@ -66,12 +66,16 @@ class HFBackboneWrapper(FeatureBackbone):
             self.feat_dim = feat_dim or 768
             self._use_fallback = True
             return
-        from transformers import AutoModel, AutoImageProcessor, AutoVideoProcessor
+        from transformers import AutoModel, AutoImageProcessor, AutoVideoProcessor, AutoConfig
 
         self.model_name = model_name
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         try:
-            self.model = AutoModel.from_pretrained(model_name).to(self.device)
+            # Ensure we get hidden states from classification heads as well
+            config = AutoConfig.from_pretrained(model_name)
+            config.output_hidden_states = True
+            config.return_dict = True
+            self.model = AutoModel.from_pretrained(model_name, config=config).to(self.device)
             # Choose processor type
             try:
                 self.processor = AutoVideoProcessor.from_pretrained(model_name)
@@ -103,21 +107,67 @@ class HFBackboneWrapper(FeatureBackbone):
             )
 
         has_cls = _has_cls_token(self.model_name)
+        # Prefer model-declared number of frames to keep token counts consistent
+        cfg_nframes = getattr(self.model.config, "num_frames", None)
+        # Fix spatial size to model's expected image size to stabilize patch grid
+        target_size = getattr(self.model.config, "image_size", 224)
+
+        def _make_inputs_video(vid_np):
+            # Try several ways to pass size depending on processor signature
+            for kwargs in (
+                {"videos": [vid_np], "return_tensors": "pt", "num_frames": int(cfg_nframes) if cfg_nframes is not None else None, "size": {"shortest_edge": int(target_size)}},
+                {"videos": [vid_np], "return_tensors": "pt", "num_frames": int(cfg_nframes) if cfg_nframes is not None else None, "size": int(target_size)},
+                {"videos": [vid_np], "return_tensors": "pt", "num_frames": int(cfg_nframes) if cfg_nframes is not None else None},
+            ):
+                try:
+                    # Remove None values
+                    k = {kk: vv for kk, vv in kwargs.items() if vv is not None}
+                    return self.processor(**k).to(self.device)
+                except Exception:
+                    continue
+            # Last resort
+            return self.processor(videos=[vid_np], return_tensors="pt").to(self.device)
+
+        def _make_inputs_images(vid_np):
+            frames_list = [f for f in vid_np]
+            for kwargs in (
+                {"images": frames_list, "return_tensors": "pt", "num_frames": int(cfg_nframes) if cfg_nframes is not None else None, "size": {"shortest_edge": int(target_size)}},
+                {"images": frames_list, "return_tensors": "pt", "num_frames": int(cfg_nframes) if cfg_nframes is not None else None, "size": int(target_size)},
+                {"images": frames_list, "return_tensors": "pt", "num_frames": int(cfg_nframes) if cfg_nframes is not None else None},
+            ):
+                try:
+                    k = {kk: vv for kk, vv in kwargs.items() if vv is not None}
+                    return self.processor(**k).to(self.device)
+                except Exception:
+                    continue
+            return self.processor(images=frames_list, return_tensors="pt").to(self.device)
         for i in range(b):
             # Prepare a single video as ndarray (T,H,W,3) uint8
             vid_np = frames[i].numpy()
             # Most HF video processors expect the keyword 'videos'. Some legacy
             # processors might still accept 'images' (e.g., *ImageProcessor* for video).
             try:
-                inputs = self.processor(videos=[vid_np], return_tensors="pt").to(self.device)
+                inputs = _make_inputs_video(vid_np)
+            except Exception:
+                inputs = _make_inputs_images(vid_np)
+            # Ask the model to return hidden states explicitly
+            try:
+                out = self.model(**inputs, output_hidden_states=True, return_dict=True)
             except TypeError:
-                # Fallback: try images=list of frames
-                inputs = self.processor(images=[f for f in vid_np], return_tensors="pt").to(self.device)
-            out = self.model(**inputs)
-            last = getattr(out, "last_hidden_state", None)
-            if last is not None:
-                # last expected shape: [1, N, D]
-                tokens = last
+                out = self.model(**inputs)
+
+            tokens = None
+            # Prefer hidden_states[-1] if available (works for *ForVideoClassification heads)
+            hidden_states = getattr(out, "hidden_states", None)
+            if hidden_states is not None and isinstance(hidden_states, (list, tuple)) and len(hidden_states) > 0:
+                tokens = hidden_states[-1]
+            else:
+                last = getattr(out, "last_hidden_state", None)
+                if last is not None:
+                    tokens = last
+
+            if tokens is not None:
+                # tokens expected shape: [1, N, D]
                 # Drop CLS token if the model uses it
                 if has_cls and tokens.size(1) > 0:
                     tokens = tokens[:, 1:, :]
