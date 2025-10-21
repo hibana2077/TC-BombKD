@@ -19,4 +19,3 @@ fvcore
 thop
 transformers
 huggingface_hub
-thop
