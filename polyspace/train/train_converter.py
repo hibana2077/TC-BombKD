@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
+import time
 
 from ..models.converters import build_converter
 from ..losses.losses import (
@@ -185,6 +185,9 @@ def train_converters(
     token_k: Optional[int] = None,
     workers: int = 2,
     pin_memory: bool = False,
+    log_every: int = 50,
+    max_batches_per_epoch: Optional[int] = None,
+    amp: Optional[bool] = None,
 ):
     os.makedirs(save_dir, exist_ok=True)
     ds = FeaturePairs(features_path, teacher_keys)
@@ -207,41 +210,106 @@ def train_converters(
     bar = BarlowTwinsLoss()
     cka = CKAMeter()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Auto-select AMP if not specified: enable on CUDA by default
+    if amp is None:
+        amp = device.type == "cuda"
+    # Performance knobs
+    try:
+        torch.set_float32_matmul_precision("medium")
+    except Exception:
+        pass
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True  # speed up variable input sizes
+    print(f"Training converters on device: {device}")
     converters.to(device)
 
     if loss_weights is None:
         loss_weights = {"l2": 1.0, "cos": 0.0, "nce": 0.0, "vic": 0.0, "bar": 0.0}
 
+    # FLOPs/Params report (best-effort)
+    def _report_model_complexity():
+        try:
+            from thop import profile, clever_format  # type: ignore
+        except Exception:
+            print("[FLOPs] thop is not installed. Skipping FLOPs report. Install with: pip install thop")
+            return
+
+        # Grab a small sample batch
+        try:
+            sample = next(iter(dl))
+        except Exception as e:
+            print(f"[FLOPs] Could not sample a batch to compute FLOPs: {e}")
+            return
+
+        with torch.no_grad():
+            param_dtype = next(converters.parameters()).dtype
+            x_s = sample["x"][:1].to(device).to(param_dtype)
+            print("[FLOPs] Input sample shape for report:", tuple(x_s.shape))
+            for k in teacher_keys:
+                m = converters[k]
+                try:
+                    flops, params = profile(m, inputs=(x_s,), verbose=False)
+                    macs, p = clever_format([flops, params], '%.3f')
+                    print(f"[FLOPs] Converter '{k}': FLOPs={macs}, Params={p}")
+                except Exception as e:
+                    print(f"[FLOPs] Failed on '{k}': {e}")
+
+    _report_model_complexity()
+
+    scaler = torch.cuda.amp.GradScaler(enabled=amp)
+
     for ep in range(1, epochs + 1):
         converters.train()
-        pbar = tqdm(dl, desc=f"Epoch {ep}")
         total = 0.0
-        for batch in pbar:
+        running = 0.0
+        count = 0
+        start_t = time.time()
+        for bi, batch in enumerate(dl, start=1):
+            if max_batches_per_epoch is not None and bi > max_batches_per_epoch:
+                break
             # Ensure inputs/targets match the converters' parameter dtype to avoid matmul dtype errors
             param_dtype = next(converters.parameters()).dtype
             x = batch["x"].to(device, non_blocking=True).to(param_dtype)
-            loss_sum = 0.0
-            opt.zero_grad()
-            for k in teacher_keys:
-                y = batch[k].to(device, non_blocking=True).to(param_dtype)
-                y_hat = converters[k](x)
-                li = 0.0
-                if loss_weights.get("l2", 0) > 0:
-                    li = li + loss_weights["l2"] * l2(y_hat, y)
-                if loss_weights.get("cos", 0) > 0:
-                    li = li + loss_weights["cos"] * cos(y_hat, y)
-                if loss_weights.get("nce", 0) > 0:
-                    li = li + loss_weights["nce"] * nce(_pool_sequence(y_hat), _pool_sequence(y))
-                if loss_weights.get("vic", 0) > 0:
-                    li = li + loss_weights["vic"] * vic(_pool_sequence(y_hat), _pool_sequence(y))
-                if loss_weights.get("bar", 0) > 0:
-                    li = li + loss_weights["bar"] * bar(_pool_sequence(y_hat), _pool_sequence(y))
-                # No special regularizer for new converters by default
-                loss_sum = loss_sum + li
-            loss_sum.backward()
-            opt.step()
-            total += loss_sum.item()
-            pbar.set_postfix({"loss": f"{loss_sum.item():.4f}"})
+            opt.zero_grad(set_to_none=True)
+            with torch.cuda.amp.autocast(enabled=amp):
+                loss_sum = 0.0
+                for k in teacher_keys:
+                    y = batch[k].to(device, non_blocking=True).to(param_dtype)
+                    y_hat = converters[k](x)
+                    li = 0.0
+                    if loss_weights.get("l2", 0) > 0:
+                        li = li + loss_weights["l2"] * l2(y_hat, y)
+                    if loss_weights.get("cos", 0) > 0:
+                        li = li + loss_weights["cos"] * cos(y_hat, y)
+                    if loss_weights.get("nce", 0) > 0:
+                        li = li + loss_weights["nce"] * nce(_pool_sequence(y_hat), _pool_sequence(y))
+                    if loss_weights.get("vic", 0) > 0:
+                        li = li + loss_weights["vic"] * vic(_pool_sequence(y_hat), _pool_sequence(y))
+                    if loss_weights.get("bar", 0) > 0:
+                        li = li + loss_weights["bar"] * bar(_pool_sequence(y_hat), _pool_sequence(y))
+                    # No special regularizer for new converters by default
+                    loss_sum = loss_sum + li
+
+            scaler.scale(loss_sum).backward()
+            scaler.step(opt)
+            scaler.update()
+
+            loss_val = float(loss_sum.item())
+            total += loss_val
+            count += 1
+            # EMA for smoother logs
+            if running == 0.0:
+                running = loss_val
+            else:
+                running = 0.9 * running + 0.1 * loss_val
+
+            if (bi % max(1, log_every) == 0) or bi == 1:
+                elapsed = time.time() - start_t
+                it_per_s = count / max(1e-6, elapsed)
+                msg = (
+                    f"Epoch {ep} | batch {bi} | loss {loss_val:.4f} | avg {total / count:.4f} | ema {running:.4f} | it/s {it_per_s:.2f}"
+                )
+                print(msg)
 
         # Save checkpoint per epoch
         ckpt_path = os.path.join(save_dir, f"converters_ep{ep}.pt")
@@ -257,7 +325,8 @@ def train_converters(
             },
             ckpt_path,
         )
-        print(f"Saved {ckpt_path}; epoch avg loss={total / len(dl):.4f}")
+        denom = min(len(dl), max_batches_per_epoch) if max_batches_per_epoch else len(dl)
+        print(f"Saved {ckpt_path}; epoch avg loss={total / max(1, denom):.4f}")
 
 
 if __name__ == "__main__":
@@ -282,6 +351,9 @@ if __name__ == "__main__":
     ], help="Converter architecture to use")
     parser.add_argument("--teacher_lens", type=int, nargs="*", help="Optional per-teacher target lengths, same order as --teachers")
     parser.add_argument("--token_k", type=int, default=None, help="K tokens for TokenLearner (only used for kind D)")
+    parser.add_argument("--log_every", type=int, default=50, help="Print training log every N batches instead of tqdm")
+    parser.add_argument("--max_batches_per_epoch", type=int, default=None, help="Limit number of batches per epoch to speed up runs")
+    parser.add_argument("--no_amp", action="store_true", help="Disable mixed precision (AMP)")
     args = parser.parse_args()
 
     lens_map = None
@@ -304,4 +376,7 @@ if __name__ == "__main__":
         kind=args.kind,
         teacher_target_lens=lens_map,
         token_k=args.token_k,
+        log_every=args.log_every,
+        max_batches_per_epoch=args.max_batches_per_epoch,
+        amp=(not args.no_amp),
     )
