@@ -209,6 +209,7 @@ def train_converters(
     vic = VICRegLoss()
     bar = BarlowTwinsLoss()
     cka = CKAMeter()
+    l1 = nn.L1Loss()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # Auto-select AMP if not specified: enable on CUDA by default
     if amp is None:
@@ -224,7 +225,7 @@ def train_converters(
     converters.to(device)
 
     if loss_weights is None:
-        loss_weights = {"l2": 1.0, "cos": 0.0, "nce": 0.0, "vic": 0.0, "bar": 0.0}
+        loss_weights = {"l2": 1.0, "cos": 0.0, "nce": 0.0, "vic": 0.0, "bar": 0.0, "l1": 0.0}
 
     # FLOPs/Params report (best-effort)
     def _report_model_complexity():
@@ -310,6 +311,8 @@ def train_converters(
                         li = li + loss_weights["vic"] * vic(_pool_sequence(y_hat), _pool_sequence(y))
                     if loss_weights.get("bar", 0) > 0:
                         li = li + loss_weights["bar"] * bar(_pool_sequence(y_hat), _pool_sequence(y))
+                    if loss_weights.get("l1", 0) > 0:
+                        li = li + loss_weights["l1"] * l1(y_hat, y)
                     loss_sum = loss_sum + li
             if not first_timing_done:
                 t_train_end = time.perf_counter()
