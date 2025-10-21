@@ -191,7 +191,7 @@ def train_converters(
 ):
     os.makedirs(save_dir, exist_ok=True)
     ds = FeaturePairs(features_path, teacher_keys)
-    dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=pin_memory)
+    dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=pin_memory)
 
     converters = nn.ModuleDict()
     for k in teacher_keys:
