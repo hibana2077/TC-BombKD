@@ -112,7 +112,7 @@ def train_converters(
     converters.to(device)
 
     if loss_weights is None:
-        loss_weights = {"l2": 0.0, "cos": 0.2, "nce": 0.3, "vic": 0.3, "bar": 0.2, "l1": 0.2}
+        loss_weights = {"l2": 0.0, "cos": 0.2, "nce": 0.3, "vic": 0.3, "bar": 0.2, "l1": 0.0}
 
     # FLOPs/Params report (best-effort)
     def _report_model_complexity():
