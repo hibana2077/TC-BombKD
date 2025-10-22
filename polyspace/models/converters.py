@@ -92,29 +92,93 @@ class AttnResampler(nn.Module):
         y = self.ffn(y)  # (B, Lq, d_out)
         return y
 
+# ---------- Basic Components: DropPath / SwiGLU ----------
+class DropPath(nn.Module):
+    def __init__(self, p: float = 0.0):
+        super().__init__()
+        self.p = p
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.p == 0.0 or not self.training:
+            return x
+        keep = 1.0 - self.p
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        mask = x.new_empty(shape).bernoulli_(keep).div_(keep)
+        return x * mask
+
+class SwiGLU(nn.Module):
+    """y = W3( SiLU(W1 x) ⊙ (W2 x) )"""
+    def __init__(self, d: int, hidden_mult: float = 2.0):
+        super().__init__()
+        h = int(hidden_mult * d)
+        self.w1 = nn.Linear(d, h, bias=True)
+        self.w2 = nn.Linear(d, h, bias=True)
+        self.w3 = nn.Linear(h, d, bias=True)
+        # End zero initialization: stable residual activation
+        nn.init.zeros_(self.w3.weight)
+        nn.init.zeros_(self.w3.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w3(F.silu(self.w1(x)) * self.w2(x))
+
+# ---------- Modernized Version ----------
 class LinearResampler(nn.Module):
-    """B) Linear/Conv resampler with depthwise separable convs and interpolation.
+    """Modern/stable Linear+Conv resampler (RMSNorm + SiLU + SwiGLU + LayerScale + DropPath).
 
-    - Projects features to d_out
-    - Interpolates sequence length to target_len (or keep input length if None)
-    - Refines with depthwise-separable convs and gMLP-like MLP
+    - Project features to d_out
+    - Interpolate to target_len (if None, keep original length)
+    - Refine sequence with depthwise-separable 1D conv (SiLU)
+    - Further expand with SwiGLU MLP (Pre-Norm residual)
+    - LayerScale γ suppresses residual magnitude; end zero initialization; optional DropPath
 
-    Accepts (B, L, d_in) or (B, H, W, d_in).
+    Accepts (B, L, d_in) or (B, H, W, d_in), outputs (B, Lq, d_out).
     """
-
-    def __init__(self, d_in: int, d_out: int, k: int = 7, target_len: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        d_in: int,
+        d_out: int,
+        k: int = 7,
+        target_len: Optional[int] = None,
+        drop_path: float = 0.0,
+        layerscale_init: float = 1e-3,
+        mlp_mult: float = 2.0,
+        dropout: float = 0.0,
+    ) -> None:
         super().__init__()
         self.d_out = d_out
         self.target_len = target_len
+
         self.proj = nn.Linear(d_in, d_out, bias=False)
-        # Depthwise-separable convs across sequence
-        self.dw1 = nn.Conv1d(d_out, d_out, k, padding=k // 2, groups=d_out)
-        self.pw1 = nn.Conv1d(d_out, d_out, 1)
-        self.dw2 = nn.Conv1d(d_out, d_out, k, padding=k // 2, groups=d_out)
-        self.pw2 = nn.Conv1d(d_out, d_out, 1)
-        self.mlp = nn.Sequential(nn.Linear(d_out, int(1.5 * d_out)), nn.GELU(), nn.Linear(int(1.5 * d_out), d_out))
-        self.norm = nn.LayerNorm(d_out)
+
+        # Depthwise-separable conv block
+        self.dw1 = nn.Conv1d(d_out, d_out, k, padding=k // 2, groups=d_out, bias=True)
+        self.pw1 = nn.Conv1d(d_out, d_out, 1, bias=True)
+        self.dw2 = nn.Conv1d(d_out, d_out, k, padding=k // 2, groups=d_out, bias=True)
+        self.pw2 = nn.Conv1d(d_out, d_out, 1, bias=True)
+
+        self.norm1 = nn.RMSNorm(d_out)
+        self.norm2 = nn.RMSNorm(d_out)
+
+        # LayerScale (per-channel γ)
+        self.gamma1 = nn.Parameter(torch.ones(d_out) * layerscale_init)
+        self.gamma2 = nn.Parameter(torch.ones(d_out) * layerscale_init)
+
+        self.mlp = SwiGLU(d_out, hidden_mult=mlp_mult)
+        self.dp = DropPath(drop_path)
+        self.dropout = nn.Dropout(dropout)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Kaiming/LeCun depending on activation: SiLU approximates ReLU family, use fan_out linear for stability
+        nn.init.kaiming_normal_(self.dw1.weight, nonlinearity='linear')
+        nn.init.kaiming_normal_(self.pw1.weight, nonlinearity='linear')
+        nn.init.kaiming_normal_(self.dw2.weight, nonlinearity='linear')
+
+        # Make conv branch initially ≈ 0 (stable residual activation)
+        nn.init.zeros_(self.pw2.weight)
+        if self.pw2.bias is not None:
+            nn.init.zeros_(self.pw2.bias)
 
     @staticmethod
     def _flatten_seq(x: torch.Tensor) -> Tuple[torch.Tensor, Optional[Tuple[int, int]]]:
@@ -124,24 +188,40 @@ class LinearResampler(nn.Module):
         elif x.dim() == 3:
             return x, None
         else:
-            raise ValueError(f"Expected input of shape (B,L,C) or (B,H,W,C); got {tuple(x.shape)}")
+            raise ValueError(f"Expected (B,L,C) or (B,H,W,C); got {tuple(x.shape)}")
 
-    def _resample(self, h: torch.Tensor, Lq: int) -> torch.Tensor:
+    @staticmethod
+    def _interp_len(h: torch.Tensor, Lq: int) -> torch.Tensor:
         # h: (B, L, d)
         x = h.transpose(1, 2)  # (B, d, L)
         x = F.interpolate(x, size=Lq, mode="linear", align_corners=False)
-        x = self.pw1(F.gelu(self.dw1(x)))
-        x = self.pw2(F.gelu(self.dw2(x)))
         return x.transpose(1, 2)  # (B, Lq, d)
+
+    def _conv_block(self, h: torch.Tensor) -> torch.Tensor:
+        # Pre-Norm + DWConv → SiLU → PWConv, twice
+        y = self.norm1(h)                 # (B, Lq, d)
+        y = y.transpose(1, 2)             # (B, d, Lq)
+        y = self.pw1(F.silu(self.dw1(y)))
+        y = self.pw2(F.silu(self.dw2(y)))
+        y = y.transpose(1, 2)
+        # LayerScale + DropPath + Dropout
+        return h + self.dp(self.dropout(y) * self.gamma1)
+
+    def _mlp_block(self, h: torch.Tensor) -> torch.Tensor:
+        y = self.norm2(h)
+        y = self.mlp(y)                   # SwiGLU
+        return h + self.dp(self.dropout(y) * self.gamma2)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x, _ = self._flatten_seq(x)
         B, L, _ = x.shape
         Lq = self.target_len or L
-        h = self.proj(x)
-        h = self._resample(h, Lq)
-        return self.norm(h + self.mlp(h))
 
+        h = self.proj(x)
+        h = self._interp_len(h, Lq)
+        h = self._conv_block(h)
+        h = self._mlp_block(h)
+        return h  # (B, Lq, d_out)
 
 class TokenLearnerResampler(nn.Module):
     """D) TokenLearner + cross-attention decoder.
