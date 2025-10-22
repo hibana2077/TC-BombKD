@@ -92,46 +92,31 @@ class AttnResampler(nn.Module):
         y = self.ffn(y)  # (B, Lq, d_out)
         return y
 
-# ---------- Basic Components: DropPath / SwiGLU ----------
-class DropPath(nn.Module):
-    def __init__(self, p: float = 0.0):
+# ---------- 核心元件 ----------
+class ScaledTanh(nn.Module):
+    """
+    y = alpha * tanh(beta * x)
+    - alpha: 控制輸出上/下界（學習到合適範圍）
+    - beta : 控制 tanh 線性區間的寬度（學習到合適斜率）
+    兩者皆為逐通道參數，對重尾尤其有效。
+    """
+    def __init__(self, d: int, alpha0: float = 3.0, beta0: float = 0.1):
         super().__init__()
-        self.p = p
+        self.alpha = nn.Parameter(torch.ones(d) * alpha0)
+        self.beta  = nn.Parameter(torch.ones(d) * beta0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.p == 0.0 or not self.training:
-            return x
-        keep = 1.0 - self.p
-        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
-        mask = x.new_empty(shape).bernoulli_(keep).div_(keep)
-        return x * mask
+        # (B, L, d) 形狀廣播
+        a = self.alpha.view(1, 1, -1)
+        b = self.beta.view(1, 1, -1)
+        return a * torch.tanh(b * x)
 
-class SwiGLU(nn.Module):
-    """y = W3( SiLU(W1 x) ⊙ (W2 x) )"""
-    def __init__(self, d: int, hidden_mult: float = 2.0):
-        super().__init__()
-        h = int(hidden_mult * d)
-        self.w1 = nn.Linear(d, h, bias=True)
-        self.w2 = nn.Linear(d, h, bias=True)
-        self.w3 = nn.Linear(h, d, bias=True)
-        # End zero initialization: stable residual activation
-        nn.init.zeros_(self.w3.weight)
-        nn.init.zeros_(self.w3.bias)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.w3(F.silu(self.w1(x)) * self.w2(x))
-
-# ---------- Modernized Version ----------
 class LinearResampler(nn.Module):
-    """Modern/stable Linear+Conv resampler (RMSNorm + SiLU + SwiGLU + LayerScale + DropPath).
-
-    - Project features to d_out
-    - Interpolate to target_len (if None, keep original length)
-    - Refine sequence with depthwise-separable 1D conv (SiLU)
-    - Further expand with SwiGLU MLP (Pre-Norm residual)
-    - LayerScale γ suppresses residual magnitude; end zero initialization; optional DropPath
-
-    Accepts (B, L, d_in) or (B, H, W, d_in), outputs (B, Lq, d_out).
+    """
+    Modern/stable: RMSNorm(Pre-Norm) + Depthwise Separable Conv + ScaledTanh（有界）+ LayerScale
+    I/O 保持：
+      in:  (B, L, d_in) 或 (B, H, W, d_in)
+      out: (B, Lq, d_out)
     """
     def __init__(
         self,
@@ -139,9 +124,9 @@ class LinearResampler(nn.Module):
         d_out: int,
         k: int = 7,
         target_len: Optional[int] = None,
-        drop_path: float = 0.0,
         layerscale_init: float = 1e-3,
-        mlp_mult: float = 2.0,
+        conv_alpha0: float = 3.0, conv_beta0: float = 0.1,
+        mlp_alpha0: float = 2.0,  mlp_beta0: float = 0.1,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
@@ -150,35 +135,45 @@ class LinearResampler(nn.Module):
 
         self.proj = nn.Linear(d_in, d_out, bias=False)
 
-        # Depthwise-separable conv block
+        # Depthwise-separable conv x2
         self.dw1 = nn.Conv1d(d_out, d_out, k, padding=k // 2, groups=d_out, bias=True)
         self.pw1 = nn.Conv1d(d_out, d_out, 1, bias=True)
         self.dw2 = nn.Conv1d(d_out, d_out, k, padding=k // 2, groups=d_out, bias=True)
         self.pw2 = nn.Conv1d(d_out, d_out, 1, bias=True)
 
-        self.norm1 = nn.RMSNorm(d_out)
-        self.norm2 = nn.RMSNorm(d_out)
+        # Pre-Norm
+        self.norm1 = nn.RMSNorm(d_out, eps=1e-6, gain_init=1.0)
+        self.norm2 = nn.RMSNorm(d_out, eps=1e-6, gain_init=1.0)
 
-        # LayerScale (per-channel γ)
+        # 有界殘差（每個分支各一個）
+        self.bound1 = ScaledTanh(d_out, alpha0=conv_alpha0, beta0=conv_beta0)
+        self.bound2 = ScaledTanh(d_out, alpha0=mlp_alpha0,  beta0=mlp_beta0)
+
+        # LayerScale：小 γ 把殘差貢獻壓低，之後學習放大
         self.gamma1 = nn.Parameter(torch.ones(d_out) * layerscale_init)
         self.gamma2 = nn.Parameter(torch.ones(d_out) * layerscale_init)
 
-        self.mlp = SwiGLU(d_out, hidden_mult=mlp_mult)
-        self.dp = DropPath(drop_path)
-        self.dropout = nn.Dropout(dropout)
+        hidden = int(2.0 * d_out)  # 現代常用 2x 並可換 GEGLU/SwiGLU，如需可再改
+        self.mlp = nn.Sequential(
+            nn.Linear(d_out, hidden),
+            nn.SiLU(),  # 內部可保持 SiLU，之後會被有界的 ScaledTanh 夾住
+            nn.Linear(hidden, d_out),
+        )
 
+        self.dropout = nn.Dropout(dropout)
         self.reset_parameters()
 
     def reset_parameters(self):
-        # Kaiming/LeCun depending on activation: SiLU approximates ReLU family, use fan_out linear for stability
         nn.init.kaiming_normal_(self.dw1.weight, nonlinearity='linear')
         nn.init.kaiming_normal_(self.pw1.weight, nonlinearity='linear')
         nn.init.kaiming_normal_(self.dw2.weight, nonlinearity='linear')
-
-        # Make conv branch initially ≈ 0 (stable residual activation)
+        # 讓殘差初期 ≈ 0，穩定啟動
         nn.init.zeros_(self.pw2.weight)
         if self.pw2.bias is not None:
             nn.init.zeros_(self.pw2.bias)
+        nn.init.zeros_(self.mlp[-1].weight)
+        if self.mlp[-1].bias is not None:
+            nn.init.zeros_(self.mlp[-1].bias)
 
     @staticmethod
     def _flatten_seq(x: torch.Tensor) -> Tuple[torch.Tensor, Optional[Tuple[int, int]]]:
@@ -192,36 +187,34 @@ class LinearResampler(nn.Module):
 
     @staticmethod
     def _interp_len(h: torch.Tensor, Lq: int) -> torch.Tensor:
-        # h: (B, L, d)
-        x = h.transpose(1, 2)  # (B, d, L)
+        x = h.transpose(1, 2)                  # (B, d, L)
         x = F.interpolate(x, size=Lq, mode="linear", align_corners=False)
-        return x.transpose(1, 2)  # (B, Lq, d)
+        return x.transpose(1, 2)               # (B, Lq, d)
 
     def _conv_block(self, h: torch.Tensor) -> torch.Tensor:
-        # Pre-Norm + DWConv → SiLU → PWConv, twice
-        y = self.norm1(h)                 # (B, Lq, d)
-        y = y.transpose(1, 2)             # (B, d, Lq)
+        y = self.norm1(h)                      # Pre-Norm (RMS)
+        y = y.transpose(1, 2)                  # (B, d, Lq)
         y = self.pw1(F.silu(self.dw1(y)))
         y = self.pw2(F.silu(self.dw2(y)))
-        y = y.transpose(1, 2)
-        # LayerScale + DropPath + Dropout
-        return h + self.dp(self.dropout(y) * self.gamma1)
+        y = y.transpose(1, 2)                  # (B, Lq, d)
+        y = self.bound1(y)                     # <-- 有界輸出
+        return h + self.dropout(y) * self.gamma1
 
     def _mlp_block(self, h: torch.Tensor) -> torch.Tensor:
         y = self.norm2(h)
-        y = self.mlp(y)                   # SwiGLU
-        return h + self.dp(self.dropout(y) * self.gamma2)
+        y = self.mlp(y)
+        y = self.bound2(y)                     # <-- 有界輸出
+        return h + self.dropout(y) * self.gamma2
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x, _ = self._flatten_seq(x)
         B, L, _ = x.shape
         Lq = self.target_len or L
-
         h = self.proj(x)
         h = self._interp_len(h, Lq)
         h = self._conv_block(h)
         h = self._mlp_block(h)
-        return h  # (B, Lq, d_out)
+        return h
 
 class TokenLearnerResampler(nn.Module):
     """D) TokenLearner + cross-attention decoder.
