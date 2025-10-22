@@ -22,10 +22,10 @@ python3 -m polyspace.train.train_converter \
 	--teachers videomae \
 	--teacher_lens 1568 \
 	--d_in 1024 --d_out 768 \
-	--kind c \
+	--kind d \
 	--epochs 10 \
 	--batch 32 \
 	--workers 1 \
     --log_every 20 \
     --pin_memory \
-	--save_dir ./checkpoints/converters_c >> T006.log 2>&1
+	--save_dir ./checkpoints/converters_d >> T006.log 2>&1
