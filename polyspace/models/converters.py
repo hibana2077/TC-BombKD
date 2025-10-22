@@ -93,6 +93,20 @@ class AttnResampler(nn.Module):
         return y
 
 # ---------- 核心元件 ----------
+class RMSNorm(nn.Module):
+    # Root Mean Square Layer Norm（不去均值），更簡潔、穩定
+    def __init__(self, d: int, eps: float = 1e-6, gain_init: float = 1.0):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(d) * gain_init)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        dtype = x.dtype
+        x_fp32 = x.float()
+        rms = x_fp32.pow(2).mean(dim=-1, keepdim=True).add(self.eps).rsqrt()
+        y = x_fp32 * rms * self.weight
+        return y.to(dtype)
+
 class ScaledTanh(nn.Module):
     """
     y = alpha * tanh(beta * x)
@@ -142,8 +156,8 @@ class LinearResampler(nn.Module):
         self.pw2 = nn.Conv1d(d_out, d_out, 1, bias=True)
 
         # Pre-Norm
-        self.norm1 = nn.RMSNorm(d_out, eps=1e-6, gain_init=1.0)
-        self.norm2 = nn.RMSNorm(d_out, eps=1e-6, gain_init=1.0)
+        self.norm1 = RMSNorm(d_out, eps=1e-6, gain_init=1.0)
+        self.norm2 = RMSNorm(d_out, eps=1e-6, gain_init=1.0)
 
         # 有界殘差（每個分支各一個）
         self.bound1 = ScaledTanh(d_out, alpha0=conv_alpha0, beta0=conv_beta0)
