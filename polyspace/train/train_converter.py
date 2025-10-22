@@ -384,7 +384,6 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--save_dir", type=str, default="./checkpoints/converters")
     parser.add_argument("--kind", type=str, default="mlp", choices=[
-        "mlp", "procrustes", "orth", "attention", "attn",
         "a", "attn_resampler", "perceiver", "latent_xattn",
         "b", "linear_resampler", "dsconv",
         "d", "token_learner", "tokenlearner",
