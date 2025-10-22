@@ -4,6 +4,7 @@ import time
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler
 
 from ..models.converters import build_converter
@@ -153,6 +154,10 @@ def train_converters(
         total = 0.0
         running = 0.0
         count = 0
+        # Epoch metric accumulators
+        metric_sums = {"nmae": 0.0, "cos": 0.0, "relerr": 0.0}
+        metric_count = 0  # number of (sample, teacher) pairs aggregated via batch-size weighting
+        _eps = 1e-8
         start_t = time.time()
 
         it = iter(dl)
@@ -199,6 +204,24 @@ def train_converters(
                         li = li + loss_weights["bar"] * bar(pool_sequence(y_hat), pool_sequence(y))
                     if loss_weights.get("l1", 0) > 0:
                         li = li + loss_weights["l1"] * l1(y_hat, y)
+                    # Metrics (detached, fp32) per teacher
+                    with torch.no_grad():
+                        bs = x.shape[0]
+                        yh = y_hat.detach().float()
+                        yt = y.detach().float()
+                        # Average cosine similarity over the batch (flatten features/tokens)
+                        c = F.cosine_similarity(yh.flatten(1), yt.flatten(1), dim=1).mean().item()
+                        # Normed MAE: MAE normalized by mean(|target|)
+                        mae = (yh - yt).abs().mean().item()
+                        tgt_mean_abs = yt.abs().mean().item()
+                        nmae = mae / (tgt_mean_abs + _eps)
+                        # Relative error: mean(|pred-target| / (|target|+eps))
+                        rel = ((yh - yt).abs() / (yt.abs() + _eps)).mean().item()
+                        # Accumulate weighted by batch size so variable last batches don't skew
+                        metric_sums["cos"] += c * bs
+                        metric_sums["nmae"] += nmae * bs
+                        metric_sums["relerr"] += rel * bs
+                        metric_count += bs
                     loss_sum = loss_sum + li
             if not first_timing_done:
                 t_train_end = time.perf_counter()
@@ -252,7 +275,17 @@ def train_converters(
             ckpt_path,
         )
         denom = min(len(dl), max_batches_per_epoch) if max_batches_per_epoch else len(dl)
-        print(f"Saved {ckpt_path}; epoch avg loss={total / max(1, denom):.4f}")
+        # Aggregate and report epoch metrics
+        if metric_count > 0:
+            ep_cos = metric_sums["cos"] / metric_count
+            ep_nmae = metric_sums["nmae"] / metric_count
+            ep_rel = metric_sums["relerr"] / metric_count
+            print(
+                f"Saved {ckpt_path}; epoch avg loss={total / max(1, denom):.4f} | "
+                f"Normed MAE={ep_nmae:.4f} | Avg Cosine={ep_cos:.4f} | Relative Error={ep_rel:.4f}"
+            )
+        else:
+            print(f"Saved {ckpt_path}; epoch avg loss={total / max(1, denom):.4f}")
 
 
 if __name__ == "__main__":
