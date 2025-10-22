@@ -93,41 +93,64 @@ class AttnResampler(nn.Module):
         return y
 
 # ---------- 核心元件 ----------
+
 class RMSNorm(nn.Module):
-    # Root Mean Square Layer Norm（不去均值），更簡潔、穩定
-    def __init__(self, d: int, eps: float = 1e-6, gain_init: float = 1.0):
+    """
+    RMSNorm with bounded gain + target RMS scaling
+    - target_rms: 把每個 token 的 RMS 規到固定目標（預設 1.0）
+    - max_gain  : 限制可學權重的幅度，避免放大重尾
+    """
+    def __init__(self, d: int, eps: float = 1e-6, gain_init: float = 1.0,
+                 target_rms: float = 1.0, max_gain: float = 2.0):
         super().__init__()
         self.eps = eps
+        self.target_rms = target_rms
+        self.max_gain = max_gain
         self.weight = nn.Parameter(torch.ones(d) * gain_init)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         dtype = x.dtype
         x_fp32 = x.float()
-        rms = x_fp32.pow(2).mean(dim=-1, keepdim=True).add(self.eps).rsqrt()
-        y = x_fp32 * rms * self.weight
+        inv_rms = x_fp32.pow(2).mean(dim=-1, keepdim=True).add(self.eps).rsqrt()  # 1 / RMS
+        w = self.weight.clamp(-self.max_gain, self.max_gain).view(1, 1, -1)
+        y = x_fp32 * inv_rms * self.target_rms * w
         return y.to(dtype)
 
-class ScaledTanh(nn.Module):
+
+class AdaptiveScaledTanh(nn.Module):
     """
-    y = alpha * tanh(beta * x)
-    - alpha: 控制輸出上/下界（學習到合適範圍）
-    - beta : 控制 tanh 線性區間的寬度（學習到合適斜率）
-    兩者皆為逐通道參數，對重尾尤其有效。
+    有界且自適應的 tanh：
+      1) 逐通道（沿 B、L）估計 RMS，先把輸入規到 ~1
+      2) 再做 y = alpha * tanh(beta * x_hat)
+    - 這能對 heavy-tail 的 backbone（如 timesformer、videomae）快速抑制極端值，
+      對溫和分佈（如 vivit）則近似線性，不壓訊息。
     """
-    def __init__(self, d: int, alpha0: float = 3.0, beta0: float = 0.1):
+    def __init__(self, d: int, alpha0: float = 2.0, beta0: float = 0.6,
+                 eps: float = 1e-6, max_norm_scale: float = 10.0):
         super().__init__()
         self.alpha = nn.Parameter(torch.ones(d) * alpha0)
         self.beta  = nn.Parameter(torch.ones(d) * beta0)
+        self.eps = eps
+        self.max_norm_scale = max_norm_scale  # 避免當 RMS 很小時過度放大
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # (B, L, d) 形狀廣播
+        # x: (B, L, d)
+        dtype = x.dtype
+        x_fp32 = x.float()
+        # 逐通道 RMS（沿 B、L 聚合）；對 (B,1,d) 也能工作
+        inv_rms = x_fp32.pow(2).mean(dim=(0,1), keepdim=True).add(self.eps).rsqrt()  # (1,1,d)
+        inv_rms = inv_rms.clamp(max=self.max_norm_scale)  # 防極端放大
+        x_hat = x_fp32 * inv_rms
+
         a = self.alpha.view(1, 1, -1)
         b = self.beta.view(1, 1, -1)
-        return a * torch.tanh(b * x)
+        y = a * torch.tanh(b * x_hat)
+        return y.to(dtype)
+
 
 class LinearResampler(nn.Module):
     """
-    Modern/stable: RMSNorm(Pre-Norm) + Depthwise Separable Conv + ScaledTanh（有界）+ LayerScale
+    Modern/stable: RMSNorm(Pre-Norm, target RMS) + Depthwise Separable Conv + AdaptiveScaledTanh（有界）+ LayerScale
     I/O 保持：
       in:  (B, L, d_in) 或 (B, H, W, d_in)
       out: (B, Lq, d_out)
@@ -139,8 +162,9 @@ class LinearResampler(nn.Module):
         k: int = 7,
         target_len: Optional[int] = None,
         layerscale_init: float = 1e-3,
-        conv_alpha0: float = 3.0, conv_beta0: float = 0.1,
-        mlp_alpha0: float = 2.0,  mlp_beta0: float = 0.1,
+        # 調整預設：加強對重尾的抑制（較大的 beta 代表更快進入飽和）
+        conv_alpha0: float = 2.5, conv_beta0: float = 0.8,
+        mlp_alpha0: float = 1.8,  mlp_beta0: float = 0.8,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
@@ -155,22 +179,24 @@ class LinearResampler(nn.Module):
         self.dw2 = nn.Conv1d(d_out, d_out, k, padding=k // 2, groups=d_out, bias=True)
         self.pw2 = nn.Conv1d(d_out, d_out, 1, bias=True)
 
-        # Pre-Norm
-        self.norm1 = RMSNorm(d_out, eps=1e-6, gain_init=1.0)
-        self.norm2 = RMSNorm(d_out, eps=1e-6, gain_init=1.0)
+        # Pre-Norm（目標 RMS = 1，限制 gain）
+        self.norm0 = RMSNorm(d_out, eps=1e-6, gain_init=1.0, target_rms=1.0, max_gain=2.0)
+        self.norm1 = RMSNorm(d_out, eps=1e-6, gain_init=1.0, target_rms=1.0, max_gain=2.0)
+        self.norm2 = RMSNorm(d_out, eps=1e-6, gain_init=1.0, target_rms=1.0, max_gain=2.0)
 
         # 有界殘差（每個分支各一個）
-        self.bound1 = ScaledTanh(d_out, alpha0=conv_alpha0, beta0=conv_beta0)
-        self.bound2 = ScaledTanh(d_out, alpha0=mlp_alpha0,  beta0=mlp_beta0)
+        self.bound0 = AdaptiveScaledTanh(d_out, alpha0=2.2, beta0=0.7)   # 投影後先做一次柔性夾幅
+        self.bound1 = AdaptiveScaledTanh(d_out, alpha0=conv_alpha0, beta0=conv_beta0)
+        self.bound2 = AdaptiveScaledTanh(d_out, alpha0=mlp_alpha0,  beta0=mlp_beta0)
 
         # LayerScale：小 γ 把殘差貢獻壓低，之後學習放大
         self.gamma1 = nn.Parameter(torch.ones(d_out) * layerscale_init)
         self.gamma2 = nn.Parameter(torch.ones(d_out) * layerscale_init)
 
-        hidden = int(2.0 * d_out)  # 現代常用 2x 並可換 GEGLU/SwiGLU，如需可再改
+        hidden = int(2.0 * d_out)
         self.mlp = nn.Sequential(
             nn.Linear(d_out, hidden),
-            nn.SiLU(),  # 內部可保持 SiLU，之後會被有界的 ScaledTanh 夾住
+            nn.SiLU(),  # 內部仍可用 SiLU，最終由 AdaptiveScaledTanh 夾住
             nn.Linear(hidden, d_out),
         )
 
@@ -181,7 +207,7 @@ class LinearResampler(nn.Module):
         nn.init.kaiming_normal_(self.dw1.weight, nonlinearity='linear')
         nn.init.kaiming_normal_(self.pw1.weight, nonlinearity='linear')
         nn.init.kaiming_normal_(self.dw2.weight, nonlinearity='linear')
-        # 讓殘差初期 ≈ 0，穩定啟動
+        # 讓第二個 pointwise 起始約等於 0，殘差穩定
         nn.init.zeros_(self.pw2.weight)
         if self.pw2.bias is not None:
             nn.init.zeros_(self.pw2.bias)
@@ -206,18 +232,18 @@ class LinearResampler(nn.Module):
         return x.transpose(1, 2)               # (B, Lq, d)
 
     def _conv_block(self, h: torch.Tensor) -> torch.Tensor:
-        y = self.norm1(h)                      # Pre-Norm (RMS)
+        y = self.norm1(h)                      # Pre-Norm (RMS -> target 1.0)
         y = y.transpose(1, 2)                  # (B, d, Lq)
         y = self.pw1(F.silu(self.dw1(y)))
         y = self.pw2(F.silu(self.dw2(y)))
         y = y.transpose(1, 2)                  # (B, Lq, d)
-        y = self.bound1(y)                     # <-- 有界輸出
+        y = self.bound1(y)                     # 有界輸出
         return h + self.dropout(y) * self.gamma1
 
     def _mlp_block(self, h: torch.Tensor) -> torch.Tensor:
         y = self.norm2(h)
         y = self.mlp(y)
-        y = self.bound2(y)                     # <-- 有界輸出
+        y = self.bound2(y)                     # 有界輸出
         return h + self.dropout(y) * self.gamma2
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -225,6 +251,8 @@ class LinearResampler(nn.Module):
         B, L, _ = x.shape
         Lq = self.target_len or L
         h = self.proj(x)
+        h = self.norm0(h)                      # 投影後先規一到目標 RMS
+        h = self.bound0(h)                     # 再做柔性夾幅，抑制極端值
         h = self._interp_len(h, Lq)
         h = self._conv_block(h)
         h = self._mlp_block(h)
