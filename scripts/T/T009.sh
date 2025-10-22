@@ -22,10 +22,10 @@ python3 -m polyspace.train.train_converter \
 	--teachers vivit \
 	--teacher_lens 1 \
 	--d_in 1024 --d_out 768 \
-	--kind c \
+	--kind d \
 	--epochs 10 \
 	--batch 32 \
 	--workers 1 \
     --log_every 20 \
     --pin_memory \
-	--save_dir ./checkpoints/converters_c_9 >> T009.log 2>&1
+	--save_dir ./checkpoints/converters_d_9 >> T009.log 2>&1
