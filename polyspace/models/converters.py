@@ -4,16 +4,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
- 
-
 class AttnResampler(nn.Module):
-    """A) Latent Cross-Attention Resampler (Perceiver-IO style, lightweight).
+    """
+    A) Latent Cross-Attention Resampler (Perceiver-IO style, lightweight).
 
-    Inputs can be (B, L, d_in) or (B, H, W, d_in). If 2D spatial input is provided,
-    it is flattened into a sequence of length L = H*W.
+    Same-IO 模式：
+      - 輸入/輸出 shape 完全一致（含 2D 輸入）。
+      - 輸出長度跟輸入相同；不使用 learned queries。
 
-    If target_len is provided, outputs have shape (B, target_len, d_out);
-    otherwise output length follows input length (B, L, d_out).
+    非 Same-IO：
+      - 若提供 target_len，輸出 (B, target_len, d_out)；
+      - 否則輸出 (B, L, d_out)。
     """
 
     def __init__(
@@ -27,70 +28,128 @@ class AttnResampler(nn.Module):
         n_heads_dec: int = 8,
         dropout: float = 0.0,
         target_len: Optional[int] = None,
+        same_io: bool = False,        # ★ 新增：Same-IO 模式
+        keep_spatial: bool = True,    # ★ 新增：4D 進來就還 4D 回去
+        use_rope: bool = False,       # ★ 可選：若需要位置資訊可自行實作
     ) -> None:
         super().__init__()
-        self.d_out = d_out
-        self.target_len = target_len
+        self.same_io = same_io
+        self.keep_spatial = keep_spatial
+        self.use_rope = use_rope
 
-        self.in_proj = nn.Linear(d_in, d_out, bias=False)
-        self.kv_proj_in = nn.Linear(d_out, d_lat, bias=False)
+        # Same-IO 下，輸出維度最終要回到 d_in
+        self.inner_d = d_out if not same_io else (d_out if d_out != d_in else d_in)
+
+        # 投影到內部工作維度（Same-IO 且 d_out==d_in 可用 Identity）
+        self.in_proj = nn.Identity() if (same_io and self.inner_d == d_in) else nn.Linear(d_in, self.inner_d, bias=False)
+
+        # K/V 的內部維度
+        self.kv_proj_in = nn.Linear(self.inner_d, d_lat, bias=False)
+
+        # Latent 陣列與編碼器 cross-attn
         self.latents = nn.Parameter(torch.randn(n_lat, d_lat) * 0.02)
         self.enc_xattn = nn.MultiheadAttention(d_lat, num_heads=n_heads_enc, dropout=dropout, batch_first=True)
+
         self.lat_blocks = nn.ModuleList(
             [
-                nn.TransformerEncoderLayer(d_lat, nhead=n_heads_enc, dim_feedforward=2 * d_lat, dropout=dropout, batch_first=True)
+                nn.TransformerEncoderLayer(
+                    d_lat, nhead=n_heads_enc, dim_feedforward=2 * d_lat, dropout=dropout, batch_first=True
+                )
                 for _ in range(n_layers)
             ]
         )
-        self.kv_proj_lat = nn.Linear(d_lat, d_out, bias=False)
-        self.dec_xattn = nn.MultiheadAttention(d_out, num_heads=n_heads_dec, dropout=dropout, batch_first=True)
+
+        # 將 latent 投影到 decoder 的維度（與 inner_d 對齊）
+        self.kv_proj_lat = nn.Linear(d_lat, self.inner_d, bias=False)
+
+        self.dec_xattn = nn.MultiheadAttention(self.inner_d, num_heads=n_heads_dec, dropout=dropout, batch_first=True)
+
+        self.norm_q = nn.LayerNorm(self.inner_d)
+        self.norm_kv = nn.LayerNorm(self.inner_d)
+        self.norm_lat = nn.LayerNorm(d_lat)
+        self.norm_out = nn.LayerNorm(self.inner_d)
+
         self.ffn = nn.Sequential(
-            nn.LayerNorm(d_out),
-            nn.Linear(d_out, 2 * d_out),
+            nn.Linear(self.inner_d, 2 * self.inner_d),
             nn.GELU(),
-            nn.Linear(2 * d_out, d_out),
+            nn.Dropout(dropout),
+            nn.Linear(2 * self.inner_d, self.inner_d),
         )
-        # Learnable queries if target_len is fixed; else queries are derived from the input
-        if target_len is not None:
-            self.query_embed = nn.Parameter(torch.randn(target_len, d_out) * 0.02)
+
+        # Same-IO：把 inner_d 投回 d_in；否則 Identity
+        self.out_proj = (
+            nn.Linear(self.inner_d, d_in, bias=False) if same_io and self.inner_d != d_in else nn.Identity()
+        )
+
+        # Same-IO 下不使用 learned queries（輸入即 queries）
+        # 非 Same-IO，若 target_len 指定則使用 learned queries 產生固定長度輸出
+        self.target_len = None if same_io else target_len
+        if self.target_len is not None:
+            self.query_embed = nn.Parameter(torch.randn(self.target_len, self.inner_d) * 0.02)
         else:
             self.query_embed = None
 
+        self.dropout = nn.Dropout(dropout)
+
     @staticmethod
     def _flatten_seq(x: torch.Tensor) -> Tuple[torch.Tensor, Optional[Tuple[int, int]]]:
-        # x: (B, L, C) or (B, H, W, C)
-        if x.dim() == 4:
+        if x.dim() == 4:  # (B,H,W,C)
             B, H, W, C = x.shape
             return x.view(B, H * W, C), (H, W)
         elif x.dim() == 3:
             return x, None
         else:
-            raise ValueError(f"Expected input of shape (B,L,C) or (B,H,W,C); got {tuple(x.shape)}")
+            raise ValueError(f"Expected (B,L,C) or (B,H,W,C); got {tuple(x.shape)}")
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x, _hw = self._flatten_seq(x)
+    def forward(self, x: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        x_in = x
+        x, hw = self._flatten_seq(x)                       # (B,L,C_in), hw=None 或 (H,W)
         B, L, _ = x.shape
-        h = self.in_proj(x)  # (B, L, d_out)
-        kv_in = self.kv_proj_in(h)  # (B, L, d_lat)
 
-        # Encode latents attending to input tokens
-        lat = self.latents.unsqueeze(0).expand(B, -1, -1)  # (B, n_lat, d_lat)
-        lat, _ = self.enc_xattn(lat, kv_in, kv_in)
+        # 1) 輸入投影到工作維度
+        h = self.in_proj(x)                                # (B,L,inner_d)
+        kv_in = self.kv_proj_in(self.norm_kv(h))           # (B,L,d_lat)
+
+        # 2) latent 編碼（latent cross-attn + encoder layers）
+        lat = self.latents.unsqueeze(0).expand(B, -1, -1)  # (B,n_lat,d_lat)
+        lat = self.norm_lat(lat)
+        lat, _ = self.enc_xattn(lat, kv_in, kv_in, key_padding_mask=key_padding_mask)
         for blk in self.lat_blocks:
-            lat = blk(lat)
+            lat = blk(lat)                                 # (B,n_lat,d_lat)
 
-        # Prepare decoder K/V from latents projected to d_out
-        kv = self.kv_proj_lat(lat)  # (B, n_lat, d_out)
-
-        # Queries: either learned fixed set (target_len) or derive from tokens
+        # 3) decoder：queries 來自 learned queries（固定長度）或直接用 h（Same-IO / 跟隨長度）
+        kv = self.kv_proj_lat(lat)                         # (B,n_lat,inner_d)
         if self.query_embed is not None:
-            queries = self.query_embed.unsqueeze(0).expand(B, -1, -1)  # (B, Lq, d_out)
+            queries = self.query_embed.unsqueeze(0).expand(B, -1, -1)  # (B,Lq,inner_d)
         else:
-            queries = h  # follow input length
+            queries = h                                    # (B,L,inner_d)
 
-        y, _ = self.dec_xattn(queries, kv, kv)
-        y = self.ffn(y)  # (B, Lq, d_out)
-        return y
+        # 4) cross-attn + FFN（殘差 + 正規化）
+        qn = self.norm_q(queries)
+        y, _ = self.dec_xattn(qn, kv, kv, key_padding_mask=None)
+        y = self.dropout(y) + queries
+        y = self.norm_out(y + self.ffn(y))                 # pre/post-norm 都做一點
+
+        # 5) Same-IO：投回 d_in；非 Same-IO 則直接輸出 inner_d
+        if self.same_io:
+            y = self.out_proj(y)                           # (B,L,C_in)
+            # 盡量保持「值」上的相容：加一條殘差
+            if y.shape == x.shape:
+                y = y + x                                   # residual preserve
+            out = y
+        else:
+            out = y                                        # (B,Lq,inner_d)
+
+        # 6) 回復 4D 形狀（若輸入本來是 4D 且要求保留）
+        if hw is not None and self.keep_spatial:
+            H, W = hw
+            C_out = x_in.shape[-1] if self.same_io else out.shape[-1]
+            L_out = out.shape[1]
+            assert L_out == H * W or (self.same_io and L_out == H * W), \
+                "Same-IO 模式下 L 必須等於 H*W；非 Same-IO 時若要回 4D 也需 Lq == H*W"
+            out = out.view(B, H, W, C_out)
+
+        return out
 
 # ---------- 核心元件 ----------
 
