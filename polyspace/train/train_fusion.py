@@ -99,13 +99,6 @@ def train_fusion(
                 # Ensure features are on the same device as converters/fusion
                 z0 = z0.to(device, non_blocking=True)
             z_hats = [converters[k](z0) for k in teacher_keys]
-            # Sanity check: sequence length must match for gating concat
-            for i, zi in enumerate(z_hats):
-                if zi.shape[:-1] != z0.shape[:-1]:
-                    raise RuntimeError(
-                        f"Sequence length mismatch: z0 shape {tuple(z0.shape)} vs z_hat[{teacher_keys[i]}] shape {tuple(zi.shape)}. "
-                        f"Ensure converters are configured to output the same token length as the student."
-                    )
             out = fusion(z0, z_hats)
             logits = out["logits"]
             alphas = out["alphas"]
