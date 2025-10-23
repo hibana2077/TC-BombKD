@@ -87,6 +87,8 @@ def evaluate(
         video = batch["video"].float().div(255.0).to(device)
         y = batch["label"].to(device)
         z0 = student(video)["feat"]
+        # Ensure features are on the same device as converters/fusion (student may return CPU tensors)
+        z0 = z0.to(device, non_blocking=True)
         z_hats = [converters[k](z0) for k in teacher_keys]
         logits = fusion(z0, z_hats)["logits"]
 
