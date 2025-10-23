@@ -61,7 +61,14 @@ def train_fusion(
 ):
     os.makedirs(save_dir, exist_ok=True)
     ds = build_dataset(dataset_name, dataset_root, split, num_frames)
-    dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=2, collate_fn=collate_fn)
+    dl = DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=2,
+        collate_fn=collate_fn,
+        pin_memory=torch.cuda.is_available(),
+    )
 
     student = build_backbone(student_name)
     feat_dim = student.feat_dim if hasattr(student, "feat_dim") else 768
@@ -84,6 +91,8 @@ def train_fusion(
             y = batch["label"].to(device)
             with torch.no_grad():
                 z0 = student(video)["feat"]
+                # Ensure features are on the same device as converters/fusion
+                z0 = z0.to(device, non_blocking=True)
             z_hats = [converters[k](z0) for k in teacher_keys]
             out = fusion(z0, z_hats)
             logits = out["logits"]
