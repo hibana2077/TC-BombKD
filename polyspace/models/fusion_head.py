@@ -10,15 +10,35 @@ class ResidualGatedFusion(nn.Module):
 
     z_fusion = z0 + sum_i alpha_i * (W_i @ z_i_hat)
     where alpha_i = sigmoid(MLP([z_i_hat; z0]))
+
+    This implementation supports per-converter feature sizes: each z_i_hat can
+    have its own channel dimension and will be projected into the student space (d).
     """
 
-    def __init__(self, d: int, n_converters: int, low_rank: int = 256, cls_dim: int = 0) -> None:
+    def __init__(self, d: int, converter_dims: List[int], low_rank: int = 256, cls_dim: int = 0) -> None:
         super().__init__()
         self.d = d
-        self.n = n_converters
-        r = min(low_rank, d)
-        self.proj = nn.ModuleList([nn.Sequential(nn.Linear(d, r, bias=False), nn.Linear(r, d, bias=False)) for _ in range(n_converters)])
-        self.gates = nn.ModuleList([nn.Sequential(nn.Linear(2 * d, d), nn.GELU(), nn.Linear(d, 1)) for _ in range(n_converters)])
+        self.n = len(converter_dims)
+        # Build per-converter low-rank projections from c_i -> d
+        self.proj = nn.ModuleList()
+        self.gates = nn.ModuleList()
+        for c_i in converter_dims:
+            r_i = min(low_rank, c_i, d)
+            # Factorized linear: c_i -> r_i -> d
+            self.proj.append(
+                nn.Sequential(
+                    nn.Linear(c_i, r_i, bias=False),
+                    nn.Linear(r_i, d, bias=False),
+                )
+            )
+            # Gate conditioned on both zi (c_i) and z0 (d)
+            self.gates.append(
+                nn.Sequential(
+                    nn.Linear(c_i + d, d),
+                    nn.GELU(),
+                    nn.Linear(d, 1),
+                )
+            )
         self.cls = nn.Linear(d, cls_dim) if cls_dim > 0 else None
 
     def forward(self, z0: torch.Tensor, z_hats: List[torch.Tensor]) -> Dict[str, torch.Tensor]:

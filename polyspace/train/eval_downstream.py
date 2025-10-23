@@ -36,7 +36,9 @@ def load_converters(ckpt_path: str, keys: List[str]):
             kwargs["target_len"] = int(teacher_lens[k])
         if token_k is not None:
             kwargs["K"] = int(token_k)
-        modules[k] = build_converter(kind, d_in, d_out, **kwargs)
+        mod = build_converter(kind, d_in, d_out, **kwargs)
+        setattr(mod, "out_dim", int(d_out) if d_out is not None else None)
+        modules[k] = mod
     modules.load_state_dict(ckpt["state_dict"], strict=False)
     for p in modules.parameters():
         p.requires_grad_(False)
@@ -63,7 +65,8 @@ def evaluate(
     ckpt = torch.load(fusion_ckpt, map_location="cpu")
     feat_dim = ckpt["feat_dim"]
     num_classes = ckpt["num_classes"]
-    fusion = ResidualGatedFusion(d=feat_dim, n_converters=len(teacher_keys), cls_dim=num_classes)
+    converter_dims = [int(getattr(converters[k], "out_dim", feat_dim) or feat_dim) for k in teacher_keys]
+    fusion = ResidualGatedFusion(d=feat_dim, converter_dims=converter_dims, cls_dim=num_classes)
     fusion.load_state_dict(ckpt["fusion"])
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

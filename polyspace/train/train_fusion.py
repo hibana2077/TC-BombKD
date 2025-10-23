@@ -38,7 +38,10 @@ def load_converters(ckpt_path: str, keys: List[str]) -> nn.ModuleDict:
             kwargs["target_len"] = int(teacher_lens[k])
         if token_k is not None:
             kwargs["K"] = int(token_k)
-        modules[k] = build_converter(kind, d_in, d_out, **kwargs)
+        mod = build_converter(kind, d_in, d_out, **kwargs)
+        # Attach output dim for downstream fusion wiring
+        setattr(mod, "out_dim", int(d_out) if d_out is not None else None)
+        modules[k] = mod
     modules.load_state_dict(ckpt["state_dict"], strict=False)
     for p in modules.parameters():
         p.requires_grad_(False)
@@ -73,7 +76,9 @@ def train_fusion(
     student = build_backbone(student_name)
     feat_dim = student.feat_dim if hasattr(student, "feat_dim") else 768
     converters = load_converters(converter_ckpt, teacher_keys)
-    fusion = ResidualGatedFusion(d=feat_dim, n_converters=len(teacher_keys), low_rank=256, cls_dim=num_classes)
+    # Determine per-converter output dims (fallback to student dim if unknown)
+    converter_dims = [int(getattr(converters[k], "out_dim", feat_dim) or feat_dim) for k in teacher_keys]
+    fusion = ResidualGatedFusion(d=feat_dim, converter_dims=converter_dims, low_rank=256, cls_dim=num_classes)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     student.to(device)
@@ -94,6 +99,13 @@ def train_fusion(
                 # Ensure features are on the same device as converters/fusion
                 z0 = z0.to(device, non_blocking=True)
             z_hats = [converters[k](z0) for k in teacher_keys]
+            # Sanity check: sequence length must match for gating concat
+            for i, zi in enumerate(z_hats):
+                if zi.shape[:-1] != z0.shape[:-1]:
+                    raise RuntimeError(
+                        f"Sequence length mismatch: z0 shape {tuple(z0.shape)} vs z_hat[{teacher_keys[i]}] shape {tuple(zi.shape)}. "
+                        f"Ensure converters are configured to output the same token length as the student."
+                    )
             out = fusion(z0, z_hats)
             logits = out["logits"]
             alphas = out["alphas"]
