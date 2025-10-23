@@ -29,4 +29,4 @@ python3 -m polyspace.train.train_fusion \
     --batch 8 \
     --epochs 10 \
     --lr 3e-4 \
-    --save_dir ./checkpoints/fusion_final
+    --save_dir ./checkpoints/fusion_final >> T010.log 2>&1
