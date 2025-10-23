@@ -76,6 +76,7 @@ class HMDB51Dataset(Dataset):
             header = f.readline().strip().split(",")
             name_idx = header.index("file_name") if "file_name" in header else 1
             label_idx = header.index("label") if "label" in header else 2
+            label2id: Dict[str, int] = {}
             for line in f:
                 parts = line.strip().split(",")
                 if len(parts) <= max(name_idx, label_idx):
@@ -83,12 +84,13 @@ class HMDB51Dataset(Dataset):
                 file_name = parts[name_idx]
                 label = parts[label_idx]
                 label_id = None
-                # Accept either str class or int already
+                # Accept either int index or map string class names to a contiguous id space
                 try:
                     label_id = int(label)
                 except Exception:
-                    # Map class names deterministically
-                    label_id = abs(hash(label)) % (10**6)
+                    if label not in label2id:
+                        label2id[label] = len(label2id)
+                    label_id = label2id[label]
                 video_path = os.path.join(root, split, file_name)
                 samples.append(VideoSample(video_path, label_id))
         self.samples = samples

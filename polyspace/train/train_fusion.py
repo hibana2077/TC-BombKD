@@ -86,8 +86,11 @@ def train_fusion(
     fusion.to(device)
 
     opt = torch.optim.AdamW(fusion.parameters(), lr=lr)
-    ce = nn.CrossEntropyLoss()
+    # Use ignore_index=-1 to safely skip samples with unknown/invalid labels from datasets
+    ce = nn.CrossEntropyLoss(ignore_index=-1)
 
+    warned_class_mismatch = False
+    warned_logits_mismatch = False
     for ep in range(1, epochs + 1):
         fusion.train()
         pbar = tqdm(dl, desc=f"Fusion epoch {ep}")
@@ -102,11 +105,48 @@ def train_fusion(
             out = fusion(z0, z_hats)
             logits = out["logits"]
             alphas = out["alphas"]
-            loss = ce(logits, y) + fusion.sparsity_loss(alphas, lam=1e-3, kind="l1")
+
+            # Defensive checks for label dtype and range to avoid CUDA device-side asserts
+            if y.dtype != torch.long:
+                y = y.long()
+            # Determine number of classes from logits for masking robustness
+            n_classes = int(logits.shape[1])
+            if (not warned_logits_mismatch) and (n_classes != num_classes):
+                warned_logits_mismatch = True
+                print(
+                    f"[warn] Logits have {n_classes} classes but --classes={num_classes}. "
+                    "Proceeding with masking based on logits shape."
+                )
+
+            # valid labels are in [0, n_classes-1]
+            valid_mask = (y >= 0) & (y < n_classes)
+            # For CE stability: set all invalid targets to -1 (ignored)
+            y_ce = y.clone()
+            y_ce[(y_ce < 0) | (y_ce >= n_classes)] = -1
+            if not torch.any(valid_mask):
+                # If no valid labels in this batch, skip the step gracefully
+                pbar.set_postfix({"loss": "skip(no-valid)"})
+                continue
+            if (not warned_class_mismatch) and torch.any(y >= n_classes):
+                warned_class_mismatch = True
+                ymax = int(torch.max(y).item())
+                ymin = int(torch.min(y).item())
+                print(
+                    f"[warn] Some labels are outside [0, {n_classes-1}] (min={ymin}, max={ymax}). "
+                    "They'll be ignored in loss via ignore_index=-1. Check --classes matches your dataset."
+                )
+
+            # Strong safety: compute CE only on valid subset to avoid any kernel asserts
+            logits_valid = logits[valid_mask]
+            y_valid = y[valid_mask]
+            loss_ce = nn.functional.cross_entropy(logits_valid, y_valid)
+            loss = loss_ce + fusion.sparsity_loss(alphas, lam=1e-3, kind="l1")
             opt.zero_grad()
             loss.backward()
             opt.step()
-            acc = topk_accuracy(logits.detach(), y.detach())
+            # Compute accuracy only over valid targets
+            with torch.no_grad():
+                acc = topk_accuracy(logits_valid.detach(), y_valid.detach())
             pbar.set_postfix({"loss": f"{loss.item():.3f}", **acc})
 
         ckpt_path = os.path.join(save_dir, f"fusion_ep{ep}.pt")
