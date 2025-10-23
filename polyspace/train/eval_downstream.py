@@ -75,21 +75,45 @@ def evaluate(
     fusion.to(device)
     fusion.eval()
 
-    correct1 = 0
-    correct5 = 0
-    total = 0
+    # Accumulate correct counts only over valid (labeled) samples
+    correct1 = 0.0
+    correct5 = 0.0
+    total_valid = 0
+    warned_invalid_seen = False
+    # Note on splits:
+    # - Diving48 only ships train/test JSON in this repo; any split != 'test' uses train JSON.
+    #   Prefer --split test for true test-time evaluation on Diving48.
     for batch in tqdm(dl, desc="Eval"):
         video = batch["video"].float().div(255.0).to(device)
         y = batch["label"].to(device)
         z0 = student(video)["feat"]
         z_hats = [converters[k](z0) for k in teacher_keys]
         logits = fusion(z0, z_hats)["logits"]
-        acc = topk_accuracy(logits, y)
-        correct1 += acc["top1"] * y.size(0) / 100.0
-        correct5 += acc.get("top5", 0.0) * y.size(0) / 100.0
-        total += y.size(0)
 
-    print(f"Top-1: {100.0 * correct1 / total:.2f} | Top-5: {100.0 * correct5 / total:.2f}")
+        # Mask out invalid/unlabeled targets (e.g., -1 or out of range)
+        n_classes = int(logits.shape[1])
+        valid_mask = (y >= 0) & (y < n_classes)
+        if not torch.any(valid_mask):
+            if not warned_invalid_seen:
+                warned_invalid_seen = True
+                print("[warn] No valid labels in a batch; skipping. Ensure your split has labels or pass the correct --classes.")
+            continue
+
+        logits_valid = logits[valid_mask]
+        y_valid = y[valid_mask]
+        acc = topk_accuracy(logits_valid, y_valid)
+        # Convert percentage back to counts for proper accumulation
+        b = y_valid.size(0)
+        correct1 += acc["top1"] * b / 100.0
+        if "top5" in acc:
+            correct5 += acc["top5"] * b / 100.0
+        total_valid += b
+
+    if total_valid == 0:
+        print("No valid labeled samples found. Cannot compute accuracy.")
+        return
+
+    print(f"Top-1: {100.0 * correct1 / total_valid:.2f} | Top-5: {100.0 * correct5 / total_valid:.2f}")
     print(f"VRAM (MB): {estimate_vram_mb():.1f}")
     print(estimate_flops_note())
 
