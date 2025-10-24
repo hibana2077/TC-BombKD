@@ -312,6 +312,13 @@ if __name__ == "__main__":
     parser.add_argument("--log_every", type=int, default=50, help="Print training log every N batches instead of tqdm")
     parser.add_argument("--max_batches_per_epoch", type=int, default=None, help="Limit number of batches per epoch to speed up runs")
     parser.add_argument("--no_amp", action="store_true", help="Disable mixed precision (AMP)")
+    # Loss weights
+    parser.add_argument("--loss_l2", type=float, default=0.0, help="Weight for L2 loss")
+    parser.add_argument("--loss_cos", type=float, default=0.0, help="Weight for cosine similarity loss")
+    parser.add_argument("--loss_nce", type=float, default=0.03, help="Weight for InfoNCE loss")
+    parser.add_argument("--loss_vic", type=float, default=0.03, help="Weight for VICReg loss")
+    parser.add_argument("--loss_bar", type=float, default=0.0, help="Weight for Barlow Twins loss")
+    parser.add_argument("--loss_l1", type=float, default=0.0, help="Weight for L1 loss")
     parser.add_argument(
         "--shuffle",
         type=str,
@@ -338,6 +345,16 @@ if __name__ == "__main__":
             raise SystemExit("--teacher_lens length must match --teachers")
         lens_map = {k: L for k, L in zip(args.teachers, args.teacher_lens)}
 
+    # Assemble loss weights from args
+    loss_weights = {
+        "l2": args.loss_l2,
+        "cos": args.loss_cos,
+        "nce": args.loss_nce,
+        "vic": args.loss_vic,
+        "bar": args.loss_bar,
+        "l1": args.loss_l1,
+    }
+
     train_converters(
         args.features,
         args.teachers,
@@ -350,6 +367,7 @@ if __name__ == "__main__":
         lr=args.lr,
         save_dir=args.save_dir,
         kind=args.kind,
+    loss_weights=loss_weights,
         teacher_target_lens=lens_map,
         token_k=args.token_k,
         log_every=args.log_every,
