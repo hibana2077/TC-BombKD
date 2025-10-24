@@ -35,4 +35,4 @@ python3 -m polyspace.train.train_student \
   --batch 8 \
   --epochs 10 \
   --lr 1e-3 \
-  --save_dir ./checkpoints/student
+  --save_dir ./checkpoints/student >> T014.log 2>&1
