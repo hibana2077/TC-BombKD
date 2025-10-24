@@ -9,7 +9,7 @@ from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Data
 from ..models.backbones import build_backbone
 from ..models.converters import build_converter
 from ..models.fusion_head import ResidualGatedFusion
-from ..utils.metrics import topk_accuracy, estimate_vram_mb, estimate_flops_note
+from ..utils.metrics import topk_accuracy, estimate_vram_mb, estimate_model_complexity
 
 
 def build_dataset(name: str, root: str, split: str, num_frames: int):
@@ -75,22 +75,46 @@ def evaluate(
     fusion.to(device)
     fusion.eval()
 
+    # Build a lightweight pipeline wrapper for complexity estimation
+    class FusionPipeline(torch.nn.Module):
+        def __init__(self, student, converters, fusion, teacher_keys):
+            super().__init__()
+            self.student = student
+            self.converters = converters
+            self.fusion = fusion
+            self.teacher_keys = teacher_keys
+
+        def forward(self, video: torch.Tensor) -> torch.Tensor:
+            z0 = self.student(video)["feat"]
+            z0 = z0.to(video.device, non_blocking=True)
+            z_hats = [self.converters[k](z0) for k in self.teacher_keys]
+            return self.fusion(z0, z_hats)["logits"]
+
+    pipeline = FusionPipeline(student, converters, fusion, teacher_keys)
+
     # Accumulate correct counts only over valid (labeled) samples
     correct1 = 0.0
     correct5 = 0.0
     total_valid = 0
     warned_invalid_seen = False
+    profiled = False
     # Note on splits:
     # - Diving48 only ships train/test JSON in this repo; any split != 'test' uses train JSON.
     #   Prefer --split test for true test-time evaluation on Diving48.
     for batch in tqdm(dl, desc="Eval"):
         video = batch["video"].float().div(255.0).to(device)
         y = batch["label"].to(device)
-        z0 = student(video)["feat"]
-        # Ensure features are on the same device as converters/fusion (student may return CPU tensors)
-        z0 = z0.to(device, non_blocking=True)
-        z_hats = [converters[k](z0) for k in teacher_keys]
-        logits = fusion(z0, z_hats)["logits"]
+        # Profile model on the first batch (uses eval mode and no grad)
+        if not profiled:
+            comp = estimate_model_complexity(pipeline, video, runs=5, warmup=2)
+            print(
+                f"Params: {comp['params']:.3f} M | Size: {comp['model_size_mb']:.1f} MB | "
+                f"MACs: {comp['macs']:.2f} G | FLOPs: {comp['flops']:.2f} G (via {comp['profiler']}) | "
+                f"Latency: {comp['latency_ms']:.1f} ms/batch | Throughput: {comp['throughput']:.2f} clips/s"
+            )
+            profiled = True
+
+        logits = pipeline(video)
 
         # Mask out invalid/unlabeled targets (e.g., -1 or out of range)
         n_classes = int(logits.shape[1])
@@ -117,7 +141,6 @@ def evaluate(
 
     print(f"Top-1: {100.0 * correct1 / total_valid:.2f} | Top-5: {100.0 * correct5 / total_valid:.2f}")
     print(f"VRAM (MB): {estimate_vram_mb():.1f}")
-    print(estimate_flops_note())
 
 
 if __name__ == "__main__":
