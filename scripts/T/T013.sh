@@ -31,6 +31,6 @@ python3 -m polyspace.train.eval_downstream \
   --student vjepa2 \
   --student_only \
   --classes 51 \
-  --student_head ./checkpoints/student/head_ep1.pt \
+  --student_head ./checkpoints/student/head_ep3.pt \
   --frames 16 \
   --batch 8 >> T013.log 2>&1
