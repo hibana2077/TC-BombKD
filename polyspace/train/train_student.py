@@ -9,6 +9,7 @@ from tqdm import tqdm
 from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset
 from ..models.backbones import build_backbone
 from ..utils.metrics import topk_accuracy
+from ..models.fusion_head import ResidualGatedFusion
 
 
 def build_dataset(name: str, root: str, split: str, num_frames: int):
@@ -35,6 +36,9 @@ def train_student_head(
     weight_decay: float = 0.0,
     save_dir: str = "./checkpoints/student",
     resume_head: Optional[str] = None,
+    head_kind: str = "self_residual",
+    low_rank: int = 256,
+    alpha_lam: float = 1e-3,
 ):
     os.makedirs(save_dir, exist_ok=True)
     ds = build_dataset(dataset_name, dataset_root, split, num_frames)
@@ -50,10 +54,19 @@ def train_student_head(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     student = build_backbone(student_name)
     student.to(device)
-    student.eval()  # linear probing by default
+    student.eval()  # linear probing/frozen backbone by default
 
     feat_dim = int(getattr(student, "feat_dim", 768))
-    head = nn.Linear(feat_dim, int(num_classes))
+    # Build classification head
+    if head_kind == "linear":
+        head: nn.Module = nn.Linear(feat_dim, int(num_classes))
+        is_residual = False
+    elif head_kind in {"self_residual", "self-residual", "residual"}:
+        # Mirror fusion head but fuse the student with itself via a gated residual branch.
+        head = ResidualGatedFusion(d=feat_dim, converter_dims=[feat_dim], low_rank=int(low_rank), cls_dim=int(num_classes))
+        is_residual = True
+    else:
+        raise ValueError(f"Unknown head_kind '{head_kind}', expected 'linear' or 'self_residual'.")
 
     if resume_head is not None and os.path.isfile(resume_head):
         try:
@@ -61,6 +74,7 @@ def train_student_head(
             # Try common layouts
             candidates = [
                 obj.get("head") if isinstance(obj, dict) else None,
+                obj.get("fusion") if isinstance(obj, dict) else None,
                 obj.get("state_dict") if isinstance(obj, dict) else None,
                 obj,
             ]
@@ -95,7 +109,13 @@ def train_student_head(
                 z0 = z0.to(device, non_blocking=True)
                 pooled = z0.mean(dim=1)  # [B, D]
 
-            logits = head(pooled)
+            if not is_residual:
+                logits = head(pooled)
+                alphas = None
+            else:
+                out = head(z0, [z0])  # fuse with itself
+                logits = out["logits"]
+                alphas = out.get("alphas", None)
 
             # Mask invalid labels gracefully; compute loss only on valid ones
             n_classes = int(logits.shape[1])
@@ -106,6 +126,9 @@ def train_student_head(
             logits_valid = logits[valid_mask]
             y_valid = y[valid_mask]
             loss = ce(logits_valid, y_valid)
+            # Optional sparsity regularization on gates when using residual head
+            if is_residual and (alphas is not None) and (alpha_lam > 0):
+                loss = loss + head.sparsity_loss(alphas, lam=float(alpha_lam), kind="l1")
 
             opt.zero_grad()
             loss.backward()
@@ -116,13 +139,17 @@ def train_student_head(
             pbar.set_postfix({"loss": f"{loss.item():.3f}", **acc})
 
         ckpt = {
-            "head": head.state_dict(),
+            ("fusion" if is_residual else "head"): head.state_dict(),
             "feat_dim": feat_dim,
             "num_classes": int(num_classes),
             "student": student_name,
             "epoch": ep,
+            "head_kind": head_kind,
+            "low_rank": int(low_rank),
+            "alpha_lam": float(alpha_lam),
         }
-        ckpt_path = os.path.join(save_dir, f"head_ep{ep}.pt")
+        ckpt_name = ("selfres_ep" if is_residual else "head_ep")
+        ckpt_path = os.path.join(save_dir, f"{ckpt_name}{ep}.pt")
         torch.save(ckpt, ckpt_path)
         print(f"Saved {ckpt_path}")
 
@@ -143,6 +170,9 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--save_dir", type=str, default="./checkpoints/student")
     parser.add_argument("--resume_head", type=str, default=None)
+    parser.add_argument("--head_kind", type=str, default="self_residual", choices=["linear", "self_residual"])  # classification head type
+    parser.add_argument("--low_rank", type=int, default=256, help="Low-rank bottleneck for residual head projections")
+    parser.add_argument("--alpha_lam", type=float, default=1e-3, help="L1 sparsity weight on gates for residual head")
     args = parser.parse_args()
 
     train_student_head(
@@ -158,4 +188,7 @@ if __name__ == "__main__":
         weight_decay=args.weight_decay,
         save_dir=args.save_dir,
         resume_head=args.resume_head,
+        head_kind=args.head_kind,
+        low_rank=args.low_rank,
+        alpha_lam=args.alpha_lam,
     )
