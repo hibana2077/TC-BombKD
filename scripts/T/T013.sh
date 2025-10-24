@@ -23,4 +23,4 @@ python3 -m polyspace.train.eval_downstream \
   --split test \
   --student vjepa2 \
   --student_only \
-  --fusion ./checkpoints/fusion_final/fusion_ep3.pt >> T012.log 2>&1
+  --fusion ./checkpoints/fusion_final/fusion_ep3.pt >> T013.log 2>&1
