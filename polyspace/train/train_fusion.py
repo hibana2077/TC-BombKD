@@ -94,6 +94,11 @@ def train_fusion(
     for ep in range(1, epochs + 1):
         fusion.train()
         pbar = tqdm(dl, desc=f"Fusion epoch {ep}")
+        # Epoch accumulators for averaged reporting
+        epoch_loss_sum = 0.0
+        epoch_top1_sum = 0.0
+        epoch_top5_sum = 0.0
+        epoch_count = 0
         for batch in pbar:
             video = batch["video"].float().div(255.0).to(device)
             y = batch["label"].to(device)
@@ -147,7 +152,26 @@ def train_fusion(
             # Compute accuracy only over valid targets
             with torch.no_grad():
                 acc = topk_accuracy(logits_valid.detach(), y_valid.detach())
+            # Update epoch accumulators (weight by number of valid samples)
+            n_valid = int(valid_mask.sum().item())
+            epoch_loss_sum += float(loss.item()) * n_valid
+            epoch_top1_sum += float(acc.get("top1", 0.0)) * n_valid
+            epoch_top5_sum += float(acc.get("top5", 0.0)) * n_valid
+            epoch_count += n_valid
             pbar.set_postfix({"loss": f"{loss.item():.3f}", **acc})
+
+        # Report epoch-averaged metrics
+        if epoch_count > 0:
+            epoch_loss_avg = epoch_loss_sum / epoch_count
+            epoch_top1_avg = epoch_top1_sum / epoch_count
+            epoch_top5_avg = epoch_top5_sum / epoch_count
+        else:
+            epoch_loss_avg = float("nan")
+            epoch_top1_avg = float("nan")
+            epoch_top5_avg = float("nan")
+        print(
+            f"Epoch {ep} | avg loss: {epoch_loss_avg:.3f} | avg top1: {epoch_top1_avg:.2f} | avg top5: {epoch_top5_avg:.2f}"
+        )
 
         ckpt_path = os.path.join(save_dir, f"fusion_ep{ep}.pt")
         torch.save({"fusion": fusion.state_dict(), "teacher_keys": teacher_keys, "feat_dim": feat_dim, "num_classes": num_classes}, ckpt_path)
