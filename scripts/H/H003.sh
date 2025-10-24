@@ -24,4 +24,4 @@ python3 -m polyspace.train.eval_downstream \
   --student vjepa2 \
   --teachers videomae \
   --converters ./checkpoints/H001/converters_ep10.pt \
-  --fusion ./checkpoints/H002/fusion_ep3.pt >> H003.log 2>&1
+  --fusion ./checkpoints/H002/fusion_ep1 >> H003.log 2>&1
