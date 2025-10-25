@@ -17,7 +17,7 @@ export HF_HUB_OFFLINE=1
 cd ../..
 # 備註：若不加 --shard_size 仍可輸出單一 pkl；為避免記憶體爆炸，建議啟用分片與 fp16。
 # 產出：features_hmdb51_train.index.json + 多個 features_hmdb51_train_shard_XXXXX.pkl
-echo "checkpoint: ep10" >> H034.log 2>&1
+echo "checkpoint: ep14" >> H034.log 2>&1
 python3 -m polyspace.train.eval_downstream \
   --dataset hmdb51 \
   --root ./datasets/hmdb51 \
@@ -25,8 +25,8 @@ python3 -m polyspace.train.eval_downstream \
   --student vjepa2 \
   --teachers videomae \
   --converters ./checkpoints/H032/converters_ep10.pt \
-  --fusion ./checkpoints/H033/fusion_ep10.pt >> H034.log 2>&1
-echo "checkpoint: ep9" >> H034.log 2>&1
+  --fusion ./checkpoints/H033/fusion_ep14.pt >> H034.log 2>&1
+echo "checkpoint: ep10" >> H034.log 2>&1
 python3 -m polyspace.train.eval_downstream \
   --dataset hmdb51 \
   --root ./datasets/hmdb51 \
@@ -34,4 +34,4 @@ python3 -m polyspace.train.eval_downstream \
   --student vjepa2 \
   --teachers videomae \
   --converters ./checkpoints/H032/converters_ep9.pt \
-  --fusion ./checkpoints/H033/fusion_ep9.pt >> H034.log 2>&1
+  --fusion ./checkpoints/H033/fusion_ep10.pt >> H034.log 2>&1
