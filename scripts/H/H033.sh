@@ -27,6 +27,6 @@ python3 -m polyspace.train.train_fusion \
     --classes 51 \
     --frames 16 \
     --batch 8 \
-    --epochs 10 \
+    --epochs 20 \
     --lr 3e-4 \
     --save_dir ./checkpoints/H033 >> H033.log 2>&1
