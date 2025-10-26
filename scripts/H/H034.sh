@@ -25,6 +25,6 @@ for ep in {10..16}; do
     --split test \
     --student vjepa2 \
     --teachers videomae \
-    --converters ./checkpoints/H032/converters_ep$((ep-1)).pt \
+    --converters ./checkpoints/H032/converters_ep10.pt \
     --fusion ./checkpoints/H033/fusion_ep$ep.pt >> H034.log 2>&1
 done
