@@ -15,23 +15,14 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
-# 備註：若不加 --shard_size 仍可輸出單一 pkl；為避免記憶體爆炸，建議啟用分片與 fp16。
-# 產出：features_hmdb51_train.index.json + 多個 features_hmdb51_train_shard_XXXXX.pkl
-echo "checkpoint: ep17" >> H039.log 2>&1
-python3 -m polyspace.train.eval_downstream \
-  --dataset hmdb51 \
-  --root ./datasets/hmdb51 \
-  --split test \
-  --student vjepa2 \
-  --teachers videomae \
-  --converters ./checkpoints/H037/converters_ep10.pt \
-  --fusion ./checkpoints/H038/fusion_ep17.pt >> H039.log 2>&1
-echo "checkpoint: ep10" >> H039.log 2>&1
-python3 -m polyspace.train.eval_downstream \
-  --dataset hmdb51 \
-  --root ./datasets/hmdb51 \
-  --split test \
-  --student vjepa2 \
-  --teachers videomae \
-  --converters ./checkpoints/H037/converters_ep9.pt \
-  --fusion ./checkpoints/H038/fusion_ep10.pt >> H039.log 2>&1
+for ep in {10..16}; do
+  echo "checkpoint: ep$ep" >> H039.log 2>&1
+  python3 -m polyspace.train.eval_downstream \
+    --dataset hmdb51 \
+    --root ./datasets/hmdb51 \
+    --split test \
+    --student vjepa2 \
+    --teachers videomae \
+    --converters ./checkpoints/H037/converters_ep10.pt \
+    --fusion ./checkpoints/H038/fusion_ep$ep.pt >> H039.log 2>&1
+done
