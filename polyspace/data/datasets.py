@@ -237,3 +237,159 @@ def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
     paths = [b["path"] for b in batch]
     return {"video": videos_t, "label": labels, "path": paths}
+
+
+class BreakfastDataset(Dataset):
+    """Breakfast dataset loader based on docs/new_dataset.md.
+
+    Expected structure under root:
+      breakfast/
+        P03/
+          cam01|webcam01|webcam02/
+            P03_cereals.avi
+            P03_cereals.avi.labels  # optional single-line class name
+
+    Splits (by participant id from folder name PXX):
+      - train: P03-P41 (Parts 1-3)
+      - test:  P42-P54 (Part 4)
+      - validation: maps to 'test' (dataset has no official val split)
+    """
+
+    CLASS_NAMES = [
+        "Bowl of cereals",
+        "Coffee",
+        "Chocolate milk",
+        "Orange juice",
+        "Fried eggs",
+        "Fruit salad",
+        "Pancakes",
+        "Scrambled eggs",
+        "Sandwich",
+        "Tea",
+    ]
+
+    KEYWORD_TO_CLASS = {
+        "cereal": "Bowl of cereals",
+        "cereals": "Bowl of cereals",
+        "coffee": "Coffee",
+        "chocolate": "Chocolate milk",
+        "milk": "Chocolate milk",  # fallback when combined words
+        "orange": "Orange juice",
+        "juice": "Orange juice",
+        "fried": "Fried eggs",
+        "egg": "Fried eggs",
+        "eggs": "Fried eggs",
+        "fruit": "Fruit salad",
+        "salad": "Fruit salad",
+        "pancake": "Pancakes",
+        "pancakes": "Pancakes",
+        "scrambled": "Scrambled eggs",
+        "sandwich": "Sandwich",
+        "tea": "Tea",
+    }
+
+    def __init__(self, root: str, split: str = "train", num_frames: int = 16) -> None:
+        super().__init__()
+        self.root = root
+        self.num_frames = num_frames
+        split = (split or "train").lower()
+        # Map 'validation' to 'test' since dataset has no val split
+        if split == "validation":
+            split = "test"
+        self.split = split
+
+        # Participant id ranges by split
+        if self.split == "train":
+            pid_min, pid_max = 3, 41
+        elif self.split == "test":
+            pid_min, pid_max = 42, 54
+        else:
+            raise ValueError(f"Unsupported split '{self.split}' for Breakfast (use 'train' or 'test')")
+
+        # Build class mapping
+        self.class_to_id: Dict[str, int] = {c.lower(): i for i, c in enumerate(self.CLASS_NAMES)}
+
+        samples: List[VideoSample] = []
+        # Walk participant folders
+        if not os.path.isdir(root):
+            raise FileNotFoundError(f"Breakfast root not found: {root}")
+        for pname in sorted(os.listdir(root)):
+            if not pname.upper().startswith("P"):
+                continue
+            # Parse numeric id
+            try:
+                pid = int(pname[1:])
+            except Exception:
+                continue
+            if pid < pid_min or pid > pid_max:
+                continue
+            pdir = os.path.join(root, pname)
+            if not os.path.isdir(pdir):
+                continue
+            # Cameras
+            for cam in ["cam01", "webcam01", "webcam02"]:
+                cdir = os.path.join(pdir, cam)
+                if not os.path.isdir(cdir):
+                    continue
+                for fn in sorted(os.listdir(cdir)):
+                    if not fn.lower().endswith(".avi"):
+                        continue
+                    vpath = os.path.join(cdir, fn)
+                    label = self._resolve_label_for_video(vpath)
+                    samples.append(VideoSample(vpath, label))
+
+        if not samples:
+            raise RuntimeError(f"No Breakfast videos found under {root} for split '{self.split}'")
+        self.samples = samples
+
+    def _resolve_label_for_video(self, vpath: str) -> int:
+        # Try sidecar .labels file (single line with class name or id)
+        lbl_path = vpath + ".labels"
+        if os.path.isfile(lbl_path):
+            try:
+                with open(lbl_path, "r", encoding="utf-8") as f:
+                    # use first non-empty line
+                    for line in f:
+                        txt = line.strip()
+                        if not txt:
+                            continue
+                        # numeric id
+                        if txt.isdigit():
+                            idx = int(txt)
+                            return idx if 0 <= idx < len(self.CLASS_NAMES) else -1
+                        # textual class name
+                        tid = self.class_to_id.get(txt.lower())
+                        if tid is not None:
+                            return tid
+                        # try substring keyword mapping
+                        low = txt.lower()
+                        for kw, cname in self.KEYWORD_TO_CLASS.items():
+                            if kw in low:
+                                return self.class_to_id.get(cname.lower(), -1)
+                        break
+            except Exception:
+                pass
+        # Fallback: infer from filename tokens
+        base = os.path.basename(vpath).lower()
+        # Remove extension and participant prefix
+        name = os.path.splitext(base)[0]
+        # e.g., p03_cereals -> search keywords
+        for kw, cname in self.KEYWORD_TO_CLASS.items():
+            if kw in name:
+                return self.class_to_id.get(cname.lower(), -1)
+        return -1
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        s = self.samples[idx]
+        # Probe total frames if available for even sampling
+        try:
+            container = av.open(s.video_path)
+            total = container.streams.video[0].frames or 0
+        except Exception:
+            total = 0
+        indices = _sample_frame_indices(self.num_frames, total)
+        video = _read_video_pyav(s.video_path, indices)
+        return {"video": video, "label": s.label if s.label is not None else -1, "path": s.video_path}

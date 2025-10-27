@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset
+from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset
 from ..models.backbones import build_backbone
 from ..models.converters import build_converter
 from ..models.fusion_head import ResidualGatedFusion
@@ -22,6 +22,8 @@ def build_dataset(name: str, root: str, split: str, num_frames: int):
         return Diving48Dataset(root, split=split, num_frames=num_frames)
     if name in {"ssv2", "something-something-v2"}:
         return SSv2Dataset(root, split=split, num_frames=num_frames)
+    if name in {"breakfast", "breakfast-10"}:
+        return BreakfastDataset(root, split=split, num_frames=num_frames)
     raise ValueError(f"Unknown dataset {name}")
 
 
