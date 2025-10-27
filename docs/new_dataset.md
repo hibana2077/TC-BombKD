@@ -213,7 +213,7 @@ Using gdown
 ```bash
 gdown 1jgSoof1AatiDRpGY091qd4TEKF-BUt6I
 tar -xzf BreakfastII_15fps_qvga_sync.tar.gz
-mv BreakfastII_15fps_qvga_sync ./datasets/breakfast
+mv BreakfastII_15fps_qvga_sync breakfast
 ```
 
 ### Dataset Structure
