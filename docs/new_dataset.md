@@ -41,7 +41,7 @@ video_id,file_name,label,original_filename,duration,fps,frame_count,width,height
 eat_Crash_eat_h_cm_np1_fr_med_11,eat_Crash_eat_h_cm_np1_fr_med_11.mp4,eat,Crash_eat_h_cm_np1_fr_med_11.avi,2.6333333333333333,30.0,79,560,240,560x240,266752,167596,train
 ```
 
-## Breakfast Dataset
+## Diving Dataset
 
 ### Download the dataset
 
