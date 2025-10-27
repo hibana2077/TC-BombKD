@@ -1,5 +1,6 @@
 from typing import Dict, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -144,6 +145,21 @@ class HFBackboneWrapper(FeatureBackbone):
         for i in range(b):
             # Prepare a single video as ndarray (T,H,W,3) uint8
             vid_np = frames[i].numpy()
+            # If the model declares an expected number of frames, resample/pad
+            # the clip temporally so the processor/model receives the expected
+            # number of frames. This prevents token/position-embedding size
+            # mismatches (e.g., 1372 vs 1568 tokens when temporal grid differs).
+            if cfg_nframes is not None:
+                try:
+                    n_req = int(cfg_nframes)
+                    t_cur = int(vid_np.shape[0])
+                    if t_cur != n_req and t_cur > 0:
+                        # Evenly sample (or repeat indices if n_req > t_cur)
+                        idx = np.linspace(0, max(t_cur - 1, 0), num=n_req).astype(np.int64)
+                        vid_np = vid_np[idx]
+                except Exception:
+                    # Fall back to original vid_np on any issue
+                    pass
             # Most HF video processors expect the keyword 'videos'. Some legacy
             # processors might still accept 'images' (e.g., *ImageProcessor* for video).
             try:
