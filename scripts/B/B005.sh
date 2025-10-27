@@ -1,10 +1,10 @@
 #!/bin/bash
 #PBS -P rp06
-#PBS -q gpuvolta
+#PBS -q dgxa100
 #PBS -l ngpus=1
-#PBS -l ncpus=12
+#PBS -l ncpus=16
 #PBS -l mem=24GB
-#PBS -l walltime=02:40:00
+#PBS -l walltime=05:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -15,14 +15,16 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
-for ep in {10..50}; do
-  echo "checkpoint: ep$ep" >> H044.log 2>&1
-  python3 -m polyspace.train.eval_downstream \
+python3 -m polyspace.train.train_fusion \
     --dataset breakfast \
     --root ./datasets/breakfast \
-    --split test \
+    --split train \
     --student vjepa2 \
     --teachers videomae \
-    --converters ./checkpoints/B001/converters_ep10.pt \
-    --fusion ./checkpoints/B002/fusion_ep$ep.pt >> B003.log 2>&1
-done
+    --converters ./checkpoints/B004/converters_ep10.pt \
+    --classes 51 \
+    --frames 16 \
+    --batch 8 \
+    --epochs 50 \
+    --lr 3e-4 \
+    --save_dir ./checkpoints/B005 >> B005.log 2>&1

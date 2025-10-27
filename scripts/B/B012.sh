@@ -16,13 +16,13 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 for ep in {10..50}; do
-  echo "checkpoint: ep$ep" >> H044.log 2>&1
+  echo "checkpoint: ep$ep" >> B012.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --dataset breakfast \
     --root ./datasets/breakfast \
     --split test \
     --student vjepa2 \
     --teachers videomae \
-    --converters ./checkpoints/B001/converters_ep10.pt \
-    --fusion ./checkpoints/B002/fusion_ep$ep.pt >> B003.log 2>&1
+    --converters ./checkpoints/B010/converters_ep10.pt \
+    --fusion ./checkpoints/B011/fusion_ep$ep.pt >> B012.log 2>&1
 done
