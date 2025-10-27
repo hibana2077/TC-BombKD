@@ -19,6 +19,56 @@ from ..losses.losses import (
 from .utils import FeaturePairs, ShardAwareSampler, pool_sequence
 
 
+def _make_pad_collate(keys):
+    """Create a collate_fn that pads variable-length (L, D) tensors per key.
+
+    For each dict field in the batch:
+    - If tensors are rank-2 (L, D) and L varies, pad to max L with zeros and
+      also return a "<key>_len" 1D tensor of original lengths.
+    - Otherwise, default to simple stacking.
+
+    This keeps training code simple while avoiding DataLoader stack errors.
+    """
+
+    def collate(batch):
+        if not batch:
+            return {}
+        out = {}
+        B = len(batch)
+        # Discover all keys from first sample to keep ordering stable
+        sample_keys = list(batch[0].keys())
+        for k in sample_keys:
+            vals = [b[k] for b in batch]
+            if not torch.is_tensor(vals[0]):
+                # Fallback: try to tensorize and stack
+                out[k] = torch.utils.data._utils.collate.default_collate(vals)
+                continue
+            t0 = vals[0]
+            if t0.dim() == 2:
+                # Expect shape (L, D)
+                Ds = [v.shape[-1] for v in vals]
+                if any(d != Ds[0] for d in Ds):
+                    raise RuntimeError(f"Inconsistent feature dim for key '{k}': {set(Ds)}")
+                Ls = [v.shape[0] for v in vals]
+                Lmax = max(Ls)
+                D = Ds[0]
+                padded = t0.new_zeros((B, Lmax, D))
+                for i, v in enumerate(vals):
+                    Li = v.shape[0]
+                    padded[i, :Li] = v
+                out[k] = padded
+                out[f"{k}_len"] = torch.tensor(Ls, dtype=torch.int32)
+            else:
+                # Same shape across batch is required; otherwise fall back to default collate
+                try:
+                    out[k] = torch.stack(vals, dim=0)
+                except Exception:
+                    out[k] = torch.utils.data._utils.collate.default_collate(vals)
+        return out
+
+    return collate
+
+
 def train_converters(
     features_path: str,
     teacher_keys: List[str],
@@ -78,6 +128,7 @@ def train_converters(
         sampler=sampler,
         num_workers=workers,
         pin_memory=pin_memory,
+        collate_fn=_make_pad_collate(["x", *teacher_keys]),
     )
 
     converters = nn.ModuleDict()
@@ -146,6 +197,26 @@ def train_converters(
 
     scaler = torch.amp.GradScaler(device='cuda' if device.type == 'cuda' else 'cpu', enabled=amp)
 
+    def masked_pool(x: torch.Tensor, lengths: Optional[torch.Tensor]) -> torch.Tensor:
+        """Average features over valid tokens only when a (B,) lengths vector is provided.
+
+        - If x is (B, D): return as-is.
+        - If x is (B, L, D): compute sum over first L_i tokens for each sample and divide by L_i.
+        - Else: fall back to existing pool_sequence.
+        """
+        if x.dim() == 2 or lengths is None:
+            return pool_sequence(x)
+        if x.dim() == 3 and lengths is not None:
+            B, L, D = x.shape
+            # Build mask (B, L, 1)
+            lengths = lengths.to(x.device)
+            idx = torch.arange(L, device=x.device).view(1, L, 1)
+            mask = (idx < lengths.view(B, 1, 1)).to(x.dtype)
+            s = (x * mask).sum(dim=1)
+            denom = lengths.clamp_min(1).to(x.dtype).view(B, 1)
+            return s / denom
+        return pool_sequence(x)
+
     # Simplified timing: only measure the very first batch (load -> train -> backward) and print immediately
     first_timing_done = False
     print("Starting converter training...")
@@ -179,7 +250,17 @@ def train_converters(
             param_dtype = next(converters.parameters()).dtype
             # Include host->device copy in the "load" timing for the first batch
             x = batch["x"].to(device, non_blocking=True).to(param_dtype)
+            x_len = batch.get("x_len")
+            if isinstance(x_len, torch.Tensor):
+                x_len = x_len.to(device)
             ys = {k: batch[k].to(device, non_blocking=True).to(param_dtype) for k in teacher_keys}
+            y_lens = {}
+            for k in teacher_keys:
+                yl = batch.get(f"{k}_len")
+                if isinstance(yl, torch.Tensor):
+                    y_lens[k] = yl.to(device)
+                else:
+                    y_lens[k] = None
             if not first_timing_done:
                 t2 = time.perf_counter()
 
@@ -192,30 +273,33 @@ def train_converters(
                     y_hat = converters[k](x)
                     li = 0.0
                     y = ys[k]
+                    # Pooled (masked) views for sequence-aware losses
+                    yh_pool = masked_pool(y_hat, x_len)
+                    yt_pool = masked_pool(y, y_lens.get(k))
                     if loss_weights.get("l2", 0) > 0:
-                        li = li + loss_weights["l2"] * l2(y_hat, y)
+                        li = li + loss_weights["l2"] * l2(yh_pool, yt_pool)
                     if loss_weights.get("cos", 0) > 0:
-                        li = li + loss_weights["cos"] * cos(y_hat, y)
+                        li = li + loss_weights["cos"] * cos(yh_pool, yt_pool)
                     if loss_weights.get("nce", 0) > 0:
-                        li = li + loss_weights["nce"] * nce(pool_sequence(y_hat), pool_sequence(y))
+                        li = li + loss_weights["nce"] * nce(yh_pool, yt_pool)
                     if loss_weights.get("vic", 0) > 0:
-                        li = li + loss_weights["vic"] * vic(pool_sequence(y_hat), pool_sequence(y))
+                        li = li + loss_weights["vic"] * vic(yh_pool, yt_pool)
                     if loss_weights.get("bar", 0) > 0:
-                        li = li + loss_weights["bar"] * bar(pool_sequence(y_hat), pool_sequence(y))
+                        li = li + loss_weights["bar"] * bar(yh_pool, yt_pool)
                     if loss_weights.get("l1", 0) > 0:
-                        li = li + loss_weights["l1"] * l1(y_hat, y)
+                        li = li + loss_weights["l1"] * l1(yh_pool, yt_pool)
                     # Metrics (detached, fp32) per teacher
                     with torch.no_grad():
                         bs = x.shape[0]
-                        yh = y_hat.detach().float()
-                        yt = y.detach().float()
-                        # Average cosine similarity over the batch (flatten features/tokens)
-                        c = F.cosine_similarity(yh.flatten(1), yt.flatten(1), dim=1).mean().item()
-                        # Normed MAE: MAE normalized by mean(|target|)
+                        yh = masked_pool(y_hat.detach().float(), x_len)
+                        yt = masked_pool(y.detach().float(), y_lens.get(k))
+                        # Average cosine similarity over the batch on pooled vectors
+                        c = F.cosine_similarity(yh, yt, dim=1).mean().item()
+                        # Normed MAE on pooled vectors
                         mae = (yh - yt).abs().mean().item()
                         tgt_mean_abs = yt.abs().mean().item()
                         nmae = mae / (tgt_mean_abs + _eps)
-                        # Relative error: mean(|pred-target| / (|target|+eps))
+                        # Relative error on pooled vectors
                         rel = ((yh - yt).abs() / (yt.abs() + _eps)).mean().item()
                         # Accumulate weighted by batch size so variable last batches don't skew
                         metric_sums["cos"] += c * bs
