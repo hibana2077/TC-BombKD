@@ -4,7 +4,7 @@
 #PBS -l ngpus=1
 #PBS -l ncpus=12
 #PBS -l mem=24GB
-#PBS -l walltime=08:00:00
+#PBS -l walltime=12:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -30,4 +30,4 @@ python3 -m polyspace.data.featurize \
 	--shard_size 512 \
 	--fp16 \
 	--no_tqdm \
-	>> S000.log 2>&1
+	>> B000.log 2>&1
