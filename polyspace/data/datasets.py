@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import av
+import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -17,18 +18,56 @@ def _safe_int(x: Any, default: int = 0) -> int:
 
 
 def _read_video_pyav(path: str, indices: List[int]) -> np.ndarray:
-    container = av.open(path)
+    """Decode frames using PyAV with an OpenCV fallback for bad metadata encodings.
+
+    Some files contain invalid UTF-8 in metadata causing PyAV to raise UnicodeDecodeError
+    during container initialization. In that case, fall back to OpenCV decoding.
+    """
+    try:
+        container = av.open(path)
+        frames = []
+        start = int(indices[0])
+        end = int(indices[-1])
+        want = set(indices)
+        for i, frame in enumerate(container.decode(video=0)):
+            if i > end:
+                break
+            if i >= start and i in want:
+                frames.append(frame.to_ndarray(format="rgb24"))
+        if frames:
+            return np.stack(frames)  # T,H,W,3
+        # If PyAV produced no frames, try OpenCV as a last resort
+        return _read_video_cv2(path, indices)
+    except UnicodeDecodeError:
+        # Known PyAV issue on bad metadata encodings
+        return _read_video_cv2(path, indices)
+    except av.AVError:
+        # Corrupted stream or unsupported codec — try OpenCV
+        return _read_video_cv2(path, indices)
+
+
+def _read_video_cv2(path: str, indices: List[int]) -> np.ndarray:
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to open video with OpenCV: {path}")
     frames = []
-    start = indices[0]
-    end = indices[-1]
-    for i, frame in enumerate(container.decode(video=0)):
-        if i > end:
+    start = int(indices[0])
+    end = int(indices[-1])
+    want = set(indices)
+    i = 0
+    # Sequential scan; more robust than random seeks across diverse codecs
+    while i <= end:
+        ok, bgr = cap.read()
+        if not ok:
             break
-        if i >= start and i in indices:
-            frames.append(frame.to_ndarray(format="rgb24"))
+        if i >= start and i in want:
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            frames.append(rgb)
+        i += 1
+    cap.release()
     if not frames:
         raise RuntimeError(f"No frames decoded for {path}")
-    return np.stack(frames)  # T,H,W,3
+    return np.stack(frames)
 
 
 def _sample_frame_indices(num_frames: int, total_frames: int) -> List[int]:
