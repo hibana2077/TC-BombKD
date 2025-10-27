@@ -25,6 +25,6 @@ python3 -m polyspace.train.train_fusion \
     --classes 51 \
     --frames 16 \
     --batch 8 \
-    --epochs 20 \
+    --epochs 100 \
     --lr 3e-4 \
     --save_dir ./checkpoints/B002 >> B002.log 2>&1
