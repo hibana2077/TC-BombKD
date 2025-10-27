@@ -203,3 +203,72 @@ ssv2/
 211642;Scooping something up with something
 215493;Pretending to poke something
 ```
+
+## Breakfast Dataset
+
+### Download the dataset
+
+Using gdown
+
+```bash
+gdown 1jgSoof1AatiDRpGY091qd4TEKF-BUt6I
+tar -xzf BreakfastII_15fps_qvga_sync.tar.gz
+mv BreakfastII_15fps_qvga_sync ./datasets/breakfast
+```
+
+### Dataset Structure
+
+```
+breakfast/
+├── P03/
+│   ├── cam01/
+│   │   ├── P03_cereals.avi
+│   │   ├── P03_cereals.avi.labels
+│   │   └── ...
+│   ├── webcam01/
+│   │   ├── P03_cereals.avi
+│   │   ├── P03_cereals.avi.labels
+│   │   └── ...
+│   └── webcam02/
+│       ├── P03_cereals.avi
+│       ├── P03_cereals.avi.labels
+│       └── ...
+├── ...
+├── P54/
+│   ├── cam01/
+│   │   ├── P54_cereals.avi
+│   │   ├── P54_cereals.avi.labels
+│   │   └── ...
+│   ├── webcam01/
+│   │   ├── P54_cereals.avi
+│   │   ├── P54_cereals.avi.labels
+│   │   └── ...
+│   └── webcam02/
+│       ├── P54_cereals.avi
+│       ├── P54_cereals.avi.labels
+│       └── ...
+```
+
+### Split
+
+- Part 1: P03 - P15
+- Part 2: P16 - P28
+- Part 3: P29 - P41
+- Part 4: P42 - P54
+
+Train on Part 1-3, Test on Part 4.
+
+### Label Format
+
+10 classes:
+
+- Bowl of cereals
+- Coffee
+- Chocolate milk
+- Orange juice
+- Fried eggs
+- Fruit salad
+- Pancakes
+- Scrambled eggs
+- Sandwich
+- Tea
