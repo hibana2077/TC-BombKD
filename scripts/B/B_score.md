@@ -10,6 +10,9 @@
 | B016-B018 | [0.0, 0.1, 0.0, 0.0, 0.9, 0.0] | 69.82 | 98.48 |
 | B019-B021 | [0.0, 0.0, 0.5, 0.5, 0.0, 0.0] | TBD | TBD |
 | B022-B024 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | TBD | TBD |
+| B025-B027 | [0.0, 0.0, 0.0, 1.0, 0.0, 0.0] | TBD | TBD |
+| B028-B030 | [0.0, 0.0, 1.0, 0.0, 0.0, 0.0] | TBD | TBD |
+| B031-B033 | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD |
 
 ## Loss Weights
 
@@ -18,4 +21,4 @@
 ## Teacher Models
 
 - B001-B021: VideoMAE pre-trained on Kinetics400
-- B022-B024: TimeSformer pre-trained on ssv2
+- B022-B033: TimeSformer pre-trained on ssv2
