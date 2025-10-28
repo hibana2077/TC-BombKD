@@ -8,7 +8,7 @@ This folder implements the core idea from docs/abs.md:
 
 ## Structure
 
-- data/: datasets (HMDB51, Diving48, SSv2) and feature extraction
+- data/: datasets (HMDB51, UCF101, Diving48, SSv2, Breakfast) and feature extraction
 - models/: backbones, converters (Procrustes/Residual MLP), fusion head
 - losses/: L2, Cosine, InfoNCE, VICReg, Barlow Twins, CKA meter
 - train/: train converters, train fusion classifier, evaluate

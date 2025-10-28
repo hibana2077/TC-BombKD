@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset
+from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset
 from ..models.backbones import build_backbone
 from ..models.converters import build_converter
 from ..models.fusion_head import ResidualGatedFusion
@@ -22,6 +22,8 @@ def build_dataset(name: str, root: str, split: str, num_frames: int):
         return SSv2Dataset(root, split=split, num_frames=num_frames)
     if name in {"breakfast", "breakfast-10"}:
         return BreakfastDataset(root, split=split, num_frames=num_frames)
+    if name in {"ucf101", "ucf-101"}:
+        return UCF101Dataset(root, split=split, num_frames=num_frames)
     raise ValueError(f"Unknown dataset {name}")
 
 
@@ -81,6 +83,8 @@ def evaluate(
             return 174
         if n in {"breakfast", "breakfast-10"}:
             return 10
+        if n in {"ucf101", "ucf-101"}:
+            return 101
         return None
 
     # Two modes: student-only or student+converters+fusion

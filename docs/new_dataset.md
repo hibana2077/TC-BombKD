@@ -289,7 +289,7 @@ also download the annotation files.
 
 ```bash
 curl -L -o UCF101TrainTestSplits-RecognitionTask.zip https://huggingface.co/datasets/quchenyuan/UCF101-ZIP/resolve/main/UCF101TrainTestSplits-RecognitionTask.zip?download=true
-unzip UCF101TrainTestSplits-RecognitionTask.zip # if you don't want to see unzip logs, use `unzip -q`. I relly recommend using `unzip -q`
+unzip UCF101TrainTestSplits-RecognitionTask.zip
 mv ucfTrainTestlist UCF101/ucfTrainTestlist
 ```
 

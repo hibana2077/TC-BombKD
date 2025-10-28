@@ -154,6 +154,127 @@ class HMDB51Dataset(Dataset):
         }
 
 
+class UCF101Dataset(Dataset):
+    """UCF101 dataset loader using the official Train/Test split lists.
+
+    Expected structure under root (see docs/new_dataset.md):
+      UCF101/
+        ApplyEyeMakeup/*.avi
+        ...
+        YoYo/*.avi
+        ucfTrainTestlist/
+          classInd.txt               # "1 ApplyEyeMakeup" ... "101 YoYo"
+          trainlist01.txt            # "ApplyEyeMakeup/v_...avi 1"
+          trainlist02.txt, trainlist03.txt
+          testlist01.txt             # "ApplyEyeMakeup/v_...avi" (no label column)
+          testlist02.txt, testlist03.txt
+
+    Split handling:
+      - split="train" -> trainlist01.txt by default
+      - split="validation" -> testlist01.txt (common practice for quick eval)
+      - split="test" -> testlist01.txt
+      - You can select 01/02/03 by passing split like "train02", "test03", etc.
+    Labels are inferred from classInd.txt or from the class folder in file paths.
+    Output labels are zero-based integers in [0, 100].
+    """
+
+    def __init__(self, root: str, split: str = "train", num_frames: int = 16) -> None:
+        super().__init__()
+        self.root = root
+        self.split = (split or "train").lower()
+        self.num_frames = num_frames
+
+        # Resolve list id (01/02/03) heuristically from split string
+        list_id = "01"
+        for cand in ("01", "02", "03"):  # prefer explicit
+            if cand in self.split:
+                list_id = cand
+                break
+        # Determine list file name
+        if self.split.startswith("train"):
+            list_name = f"trainlist{list_id}.txt"
+        elif self.split.startswith("test") or self.split.startswith("val"):
+            # map validation -> test list
+            list_name = f"testlist{list_id}.txt"
+        else:
+            # fallback: train
+            list_name = f"trainlist{list_id}.txt"
+
+        list_dir = os.path.join(root, "ucfTrainTestlist")
+        cls_file = os.path.join(list_dir, "classInd.txt")
+        list_file = os.path.join(list_dir, list_name)
+        if not os.path.isfile(list_file):
+            raise FileNotFoundError(f"Split list not found: {list_file}")
+        if not os.path.isfile(cls_file):
+            raise FileNotFoundError(f"classInd.txt not found: {cls_file}")
+
+        # Build class name -> zero-based id
+        name2id: Dict[str, int] = {}
+        with open(cls_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                try:
+                    cid = int(parts[0])
+                except Exception:
+                    continue
+                cname = parts[1].strip()
+                name2id[cname] = cid - 1  # zero-based
+
+        # Parse split list
+        samples: List[VideoSample] = []
+        with open(list_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                # train lists have two columns, test lists have one column
+                parts = line.split()
+                rel_path = parts[0]
+                # rel_path like "ApplyEyeMakeup/v_ApplyEyeMakeup_g08_c01.avi"
+                # Infer class name from first directory component
+                class_name = rel_path.split("/")[0]
+                if len(parts) >= 2:
+                    # if label column present, trust it but convert to zero-based
+                    try:
+                        y = int(parts[1]) - 1
+                    except Exception:
+                        y = name2id.get(class_name, -1)
+                else:
+                    y = name2id.get(class_name, -1)
+
+                vpath = os.path.join(root, rel_path)
+                if not os.path.isfile(vpath):
+                    # Some mirrors may have mp4 instead of avi
+                    alt = os.path.splitext(vpath)[0] + ".mp4"
+                    if os.path.isfile(alt):
+                        vpath = alt
+                samples.append(VideoSample(vpath, y))
+
+        if not samples:
+            raise RuntimeError(f"No UCF101 samples loaded from {list_file}")
+        self.samples = samples
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        s = self.samples[idx]
+        # Probe frame count when possible
+        try:
+            container = av.open(s.video_path)
+            total = container.streams.video[0].frames or 0
+        except Exception:
+            total = 0
+        indices = _sample_frame_indices(self.num_frames, total)
+        video = _read_video_pyav(s.video_path, indices)
+        return {"video": video, "label": s.label if s.label is not None else -1, "path": s.video_path}
+
+
 class Diving48Dataset(Dataset):
     """Diving48 dataset loader using JSON labels as in docs/new_dataset.md.
 
