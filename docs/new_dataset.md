@@ -281,14 +281,16 @@ Using curl
 
 ```bash
 curl -L -o UCF101.zip https://huggingface.co/datasets/quchenyuan/UCF101-ZIP/resolve/main/UCF-101.zip?download=true
-unzip UCF101.zip -d ./datasets/UCF101 # if you don't want to see unzip logs, use `unzip -q`. I relly recommend using `unzip -q`
+unzip -q UCF101.zip # if you don't want to see unzip logs, use `unzip -q`. I relly recommend using `unzip -q`
+mv UCF-101 UCF101
 ```
 
 also download the annotation files.
 
 ```bash
 curl -L -o UCF101TrainTestSplits-RecognitionTask.zip https://huggingface.co/datasets/quchenyuan/UCF101-ZIP/resolve/main/UCF101TrainTestSplits-RecognitionTask.zip?download=true
-unzip UCF101TrainTestSplits-RecognitionTask.zip -d ./datasets/UCF101/ucfTrainTestlist # if you don't want to see unzip logs, use `unzip -q`. I relly recommend using `unzip -q`
+unzip UCF101TrainTestSplits-RecognitionTask.zip # if you don't want to see unzip logs, use `unzip -q`. I relly recommend using `unzip -q`
+mv ucfTrainTestlist UCF101/ucfTrainTestlist
 ```
 
 ### Dataset Structure
