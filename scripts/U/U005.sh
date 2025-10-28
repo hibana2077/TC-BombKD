@@ -21,7 +21,7 @@ python3 -m polyspace.train.train_fusion \
     --split train \
     --student vjepa2 \
     --teachers timesformer \
-    --converters ./checkpoints/U004/converters_ep7.pt \
+    --converters ./checkpoints/U004/converters_ep9.pt \
     --classes 101 \
     --frames 16 \
     --batch 8 \
