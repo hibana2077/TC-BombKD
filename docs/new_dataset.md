@@ -272,3 +272,82 @@ Train on Part 1-3, Test on Part 4.
 - Scrambled eggs
 - Sandwich
 - Tea
+
+## UCF101 Dataset
+
+### Download the dataset
+
+Using curl
+
+```bash
+curl -L -o UCF101.zip https://huggingface.co/datasets/quchenyuan/UCF101-ZIP/resolve/main/UCF-101.zip?download=true
+unzip UCF101.zip -d ./datasets/UCF101 # if you don't want to see unzip logs, use `unzip -q`. I relly recommend using `unzip -q`
+```
+
+also download the annotation files.
+
+```bash
+curl -L -o UCF101TrainTestSplits-RecognitionTask.zip https://huggingface.co/datasets/quchenyuan/UCF101-ZIP/resolve/main/UCF101TrainTestSplits-RecognitionTask.zip?download=true
+unzip UCF101TrainTestSplits-RecognitionTask.zip -d ./datasets/UCF101/ucfTrainTestlist # if you don't want to see unzip logs, use `unzip -q`. I relly recommend using `unzip -q`
+```
+
+### Dataset Structure
+
+```
+UCF101/
+├── ApplyEyeMakeup/
+│   ├── v_ApplyEyeMakeup_g01_c01.avi
+│   ├── v_ApplyEyeMakeup_g01_c02.avi
+│   ├── ...
+│   ├── v_ApplyEyeMakeup_g02_c01.avi
+│   └── ...
+├── ...
+├── YoYo/
+│   ├── v_YoYo_g01_c01.avi
+│   ├── v_YoYo_g01_c02.avi
+│   ├── ...
+│   ├── v_YoYo_g02_c01.avi
+│   └── ...
+├── ucfTrainTestlist/
+│   ├── classInd.txt
+│   ├── testlist01.txt
+│   ├── testlist02.txt
+│   ├── testlist03.txt
+│   ├── trainlist01.txt
+│   ├── trainlist02.txt
+│   └── trainlist03.txt
+```
+
+### Label Format
+
+#### ucfTrainTestlist/classInd.txt
+
+```txt
+1 ApplyEyeMakeup
+2 ApplyLipstick
+3 Archery
+...
+99 WallPushups
+100 WritingOnBoard
+101 YoYo
+```
+
+#### ucfTrainTestlist/trainlist01.txt
+
+```txt
+ApplyEyeMakeup/v_ApplyEyeMakeup_g08_c01.avi 1
+ApplyEyeMakeup/v_ApplyEyeMakeup_g08_c02.avi 1
+...
+YoYo/v_YoYo_g25_c04.avi 101
+YoYo/v_YoYo_g25_c05.avi 101
+```
+
+#### ucfTrainTestlist/testlist01.txt
+
+```txt
+ApplyEyeMakeup/v_ApplyEyeMakeup_g01_c01.avi
+ApplyEyeMakeup/v_ApplyEyeMakeup_g01_c02.avi
+...
+YoYo/v_YoYo_g07_c03.avi
+YoYo/v_YoYo_g07_c04.avi
+```

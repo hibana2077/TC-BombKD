@@ -1,4 +1,4 @@
-# Score records for B scripts
+# Score records for B(Breakfast) scripts
 
 | Code | loss weight | Top1 Acc (%) | Top5 Acc (%) |
 |------|-------------|---------------|---------------|
