@@ -27,3 +27,9 @@
 | H037-H041 | [0.0, 0.0, 0.5, 0.5, 0.0, 0.0] | 77.97 | 95.42 |
 | H042-H046 | [0.0, 0.0, 0.0, 1.0, 0.0, 0.0] | 76.90 | 94.99 |
 | H047-H051 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | 75.75 | 95.14 |
+| H052-H056 | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD |
+
+## Teacher Models
+
+- H001-H031: VideoMAE pre-trained on Kinetics400
+- H052-H056: {VideoMAE pre-trained on Kinetics400 | TimeSformer pre-trained on ssv2 | ViViT pre-trained on Kinetics400}
