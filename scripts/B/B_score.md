@@ -13,6 +13,7 @@
 | B025-B027 | [0.0, 0.0, 0.0, 1.0, 0.0, 0.0] | 58.84 | 95.12 |
 | B028-B030 | [0.0, 0.0, 1.0, 0.0, 0.0, 0.0] | 48.78 | 92.38 |
 | B031-B033 | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | 60.37 | 96.04 |
+| B034-B036 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | TBD | TBD |
 
 ## Loss Weights
 
@@ -22,3 +23,4 @@
 
 - B001-B021: VideoMAE pre-trained on Kinetics400
 - B022-B033: TimeSformer pre-trained on ssv2
+- B034-B036: ViViT pre-trained on Kinetics400
