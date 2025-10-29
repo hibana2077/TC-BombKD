@@ -2,8 +2,8 @@
 
 | Code | loss weight | Top1 Acc (%) | Top5 Acc (%) |
 |------|-------------|---------------|---------------|
-| B001-B003 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | 89.82 | 98.81 |
-| B004-B006 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | TBD | TBD |
+| U001-U003 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | 89.82 | 98.81 |
+| U004-U006 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | TBD | TBD |
 
 ## Loss Weights
 
@@ -11,5 +11,5 @@
 
 ## Teacher Models
 
-- B001-B003: VideoMAE pre-trained on Kinetics400
-- B004-B006: TimeSformer pre-trained on ssv2
+- U001-U003: VideoMAE pre-trained on Kinetics400
+- U004-U006: TimeSformer pre-trained on ssv2
