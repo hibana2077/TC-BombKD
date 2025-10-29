@@ -3,7 +3,7 @@
 | Code | loss weight | Top1 Acc (%) | Top5 Acc (%) |
 |------|-------------|---------------|---------------|
 | B001-B003 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | 67.38 | 98.17 |
-| B004-B006 | [0.0, 0.0, 0.0, 0.0, 0.0, 1.0] | TBD | TBD |
+| B004-B006 | [0.0, 0.0, 0.0, 0.0, 0.0, 1.0] | 53.35 | 92.68 |
 
 ## Loss Weights
 
@@ -11,4 +11,4 @@
 
 ## Teacher Models
 
-- B001-B003: VideoMAE pre-trained on Kinetics400
+- B001-B006: VideoMAE pre-trained on Kinetics400
