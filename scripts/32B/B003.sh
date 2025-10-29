@@ -23,6 +23,6 @@ for ep in {10..50}; do
     --split test \
     --student vjepa2 \
     --teachers videomae \
-    --converters ./checkpoints/B001/converters_ep10.pt \
-    --fusion ./checkpoints/B002/fusion_ep$ep.pt >> B003.log 2>&1
+    --converters ./checkpoints/BX001/converters_ep10.pt \
+    --fusion ./checkpoints/BX002/fusion_ep$ep.pt >> BX003.log 2>&1
 done

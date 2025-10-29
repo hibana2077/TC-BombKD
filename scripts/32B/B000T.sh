@@ -30,4 +30,4 @@ python3 -m polyspace.data.featurize \
 	--shard_size 512 \
 	--fp16 \
 	--no_tqdm \
-	>> B000T.log 2>&1
+	>> BX000T.log 2>&1

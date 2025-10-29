@@ -21,10 +21,10 @@ python3 -m polyspace.train.train_fusion \
     --split train \
     --student vjepa2 \
     --teachers videomae \
-    --converters ./checkpoints/B001/converters_ep10.pt \
+    --converters ./checkpoints/BX001/converters_ep10.pt \
     --classes 51 \
-    --frames 16 \
+    --frames 32 \
     --batch 8 \
     --epochs 50 \
     --lr 3e-4 \
-    --save_dir ./checkpoints/B002 >> B002.log 2>&1
+    --save_dir ./checkpoints/BX002 >> BX002.log 2>&1
