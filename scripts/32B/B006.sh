@@ -15,7 +15,7 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
-for ep in {10..50}; do
+for ep in {1..50}; do
   echo "checkpoint: ep$ep" >> BX006.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --dataset breakfast \
