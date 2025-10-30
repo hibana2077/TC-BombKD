@@ -1,6 +1,5 @@
 #!/bin/bash
 #PBS -P rp06
-#PBS -q rp06
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
