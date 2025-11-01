@@ -27,3 +27,4 @@
 - B001-B021: VideoMAE pre-trained on Kinetics400
 - B022-B033: TimeSformer pre-trained on ssv2
 - B034-B036: ViViT pre-trained on Kinetics400
+- B037-B045: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2
