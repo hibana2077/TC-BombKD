@@ -4,6 +4,7 @@
 |------|-------------|---------------|---------------|
 | U001-U003 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | 89.82 | 98.81 |
 | U004-U006 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | 88.32 | 97.91 |
+| U007-U009 | [0.0, 0.0, 1.0, 0.0, 0.0, 0.0] | TBD | TBD |
 
 ## Loss Weights
 
@@ -13,3 +14,4 @@
 
 - U001-U003: VideoMAE pre-trained on Kinetics400
 - U004-U006: TimeSformer pre-trained on ssv2
+- U007-U009: {VideoMAE, TimeSformer, Vivit} pre-trained on Kinetics400 and ssv2
