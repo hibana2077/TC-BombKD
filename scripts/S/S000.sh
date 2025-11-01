@@ -21,7 +21,7 @@ python3 -m polyspace.data.featurize \
 	--dataset ssv2 \
 	--root ./datasets/ssv2 \
 	--split train \
-	--out ./features \
+	--out ./features/ssv2 \
 	--student vjepa2 \
 	--teachers videomae timesformer vivit \
 	--batch 2 \
