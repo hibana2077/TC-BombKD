@@ -19,7 +19,7 @@ for ep in {1..50}; do
   echo "checkpoint: ep$ep" >> U009.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --dataset ucf101 \
-    --root ./datasets/ucf101 \
+    --root ./datasets/UCF101 \
     --split test \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
