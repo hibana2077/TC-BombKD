@@ -18,8 +18,8 @@ cd ../..
 # 備註：若不加 --shard_size 仍可輸出單一 pkl；為避免記憶體爆炸，建議啟用分片與 fp16。
 # 產出：features_ssv2_train.index.json + 多個 features_ssv2_train_shard_XXXXX.pkl
 python3 -m polyspace.data.featurize \
-	--dataset breakfast \
-	--root ./datasets/breakfast \
+	--dataset diving48 \
+	--root ./datasets/Diving48 \
 	--split test \
 	--out ./features \
 	--student vjepa2 \
@@ -30,4 +30,4 @@ python3 -m polyspace.data.featurize \
 	--shard_size 512 \
 	--fp16 \
 	--no_tqdm \
-	>> B000T.log 2>&1
+	>> D000T.log 2>&1
