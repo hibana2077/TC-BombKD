@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset
+from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset, UAVHumanDataset
 from ..models.backbones import build_backbone
 from ..models.converters import build_converter
 from ..models.fusion_head import ResidualGatedFusion
@@ -24,6 +24,8 @@ def build_dataset(name: str, root: str, split: str, num_frames: int):
         return BreakfastDataset(root, split=split, num_frames=num_frames)
     if name in {"ucf101", "ucf-101"}:
         return UCF101Dataset(root, split=split, num_frames=num_frames)
+    if name in {"uav", "uav-human", "uavhuman"}:
+        return UAVHumanDataset(root, split=split, num_frames=num_frames)
     raise ValueError(f"Unknown dataset {name}")
 
 
@@ -85,6 +87,19 @@ def evaluate(
             return 10
         if n in {"ucf101", "ucf-101"}:
             return 101
+        if n in {"uav", "uav-human", "uavhuman"}:
+            # Try to read classes_map.csv at dataset_root
+            try:
+                cls_csv = os.path.join(dataset_root, "classes_map.csv")
+                cnt = 0
+                with open(cls_csv, "r", encoding="utf-8") as f:
+                    _ = f.readline()
+                    for line in f:
+                        if line.strip():
+                            cnt += 1
+                return cnt if cnt > 0 else None
+            except Exception:
+                return None
         return None
 
     # Two modes: student-only or student+converters+fusion

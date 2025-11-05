@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset
+from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset, UAVHumanDataset
 from ..models.backbones import build_backbone
 from ..utils.metrics import topk_accuracy
 from ..models.fusion_head import ResidualGatedFusion
@@ -24,6 +24,8 @@ def build_dataset(name: str, root: str, split: str, num_frames: int):
         return BreakfastDataset(root, split=split, num_frames=num_frames)
     if name in {"ucf101", "ucf-101"}:
         return UCF101Dataset(root, split=split, num_frames=num_frames)
+    if name in {"uav", "uav-human", "uavhuman"}:
+        return UAVHumanDataset(root, split=split, num_frames=num_frames)
     raise ValueError(f"Unknown dataset {name}")
 
 

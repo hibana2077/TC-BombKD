@@ -374,6 +374,135 @@ class SSv2Dataset(Dataset):
         return {"video": video, "label": label, "path": vpath}
 
 
+class UAVHumanDataset(Dataset):
+    """UAV-Human dataset loader.
+
+    Expected structure under root (see docs/new_dataset.md):
+      uav/
+        all_rgb/*.avi
+        classes_map.csv           # header: id,label (e.g., A000,drink)
+        split.json                # {"Cross-Subject-v1": {"train": [...], "test": [...]}, ...}
+
+    Split handling:
+      - split="train" or "test"; "validation" maps to "test".
+      - You can pick protocol via split string: e.g., "train-v2" -> Cross-Subject-v2.
+        Default protocol is Cross-Subject-v1.
+
+    Labels:
+      - Parsed from filename token AXXX (e.g., A000) using classes_map.csv to build
+        a contiguous id space [0..C-1] in CSV order.
+    """
+
+    def __init__(self, root: str, split: str = "train", num_frames: int = 16) -> None:
+        super().__init__()
+        self.root = root
+        split = (split or "train").lower()
+        # Map validation -> test
+        base_split = "test" if split.startswith("val") else ("train" if split.startswith("train") else "test")
+        # Protocol selection from split string (v1 default)
+        protocol = "Cross-Subject-v2" if ("v2" in split or "cs2" in split) else "Cross-Subject-v1"
+        self.split = base_split
+        self.protocol = protocol
+        self.num_frames = num_frames
+
+        # Paths
+        rgb_dir = os.path.join(root, "all_rgb")
+        cls_csv = os.path.join(root, "classes_map.csv")
+        split_json = os.path.join(root, "split.json")
+        if not os.path.isdir(rgb_dir):
+            raise FileNotFoundError(f"all_rgb folder not found: {rgb_dir}")
+        if not os.path.isfile(cls_csv):
+            raise FileNotFoundError(f"classes_map.csv not found: {cls_csv}")
+        if not os.path.isfile(split_json):
+            raise FileNotFoundError(f"split.json not found: {split_json}")
+
+        # Build action id mapping from CSV (keep row order stable)
+        act_code_to_idx: Dict[str, int] = {}
+        with open(cls_csv, "r", encoding="utf-8") as f:
+            header = f.readline()  # skip
+            i = 0
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                # split on first comma to allow commas in label names (unlikely but safe)
+                parts = line.split(",", 1)
+                if len(parts) < 1:
+                    continue
+                code = parts[0].strip()
+                if code == "id":
+                    # in case header wasn't stripped
+                    continue
+                if code not in act_code_to_idx:
+                    act_code_to_idx[code] = i
+                    i += 1
+        self.act_code_to_idx = act_code_to_idx
+
+        # Load subject split indices for chosen protocol
+        with open(split_json, "r", encoding="utf-8") as f:
+            split_obj = json.load(f)
+        if protocol not in split_obj:
+            raise KeyError(f"Protocol '{protocol}' not found in {split_json}")
+        subj_split = split_obj[protocol]
+        subj_train = set(int(x) for x in subj_split.get("train", []))
+        subj_test = set(int(x) for x in subj_split.get("test", []))
+
+        # Enumerate videos and filter by subject set
+        samples: List[VideoSample] = []
+        for fn in sorted(os.listdir(rgb_dir)):
+            if not fn.lower().endswith((".avi", ".mp4", ".webm")):
+                continue
+            # Parse subject code Pxxx and action code Axxx from filename
+            # Example: P000S00...A000R0_08241716.avi
+            subj_idx = None
+            act_code = None
+            # Fast substring scans
+            # Subject: find 'P' followed by 3 digits
+            for i in range(len(fn) - 3):
+                if fn[i] == 'P' and fn[i+1:i+4].isdigit():
+                    try:
+                        subj_idx = int(fn[i+1:i+4])
+                        break
+                    except Exception:
+                        pass
+            # Action: find 'A' followed by 3 digits
+            for i in range(len(fn) - 3):
+                if fn[i] == 'A' and fn[i+1:i+4].isdigit():
+                    act_code = fn[i:i+4]
+                    break
+            if subj_idx is None or act_code is None:
+                continue
+            # Filter by split
+            if self.split == "train" and subj_idx not in subj_train:
+                continue
+            if self.split == "test" and subj_idx not in subj_test:
+                continue
+            label = act_code_to_idx.get(act_code, -1)
+            vpath = os.path.join(rgb_dir, fn)
+            samples.append(VideoSample(vpath, label))
+
+        if not samples:
+            raise RuntimeError(
+                f"No UAV-Human samples found for split='{self.split}' protocol='{self.protocol}' under {rgb_dir}"
+            )
+        self.samples = samples
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        s = self.samples[idx]
+        # Try to probe total frames for even sampling
+        try:
+            container = av.open(s.video_path)
+            total = container.streams.video[0].frames or 0
+        except Exception:
+            total = 0
+        indices = _sample_frame_indices(self.num_frames, total)
+        video = _read_video_pyav(s.video_path, indices)
+        return {"video": video, "label": s.label if s.label is not None else -1, "path": s.video_path}
+
+
 def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Collate a batch of variable-sized videos by zero-padding.
 
