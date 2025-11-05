@@ -353,3 +353,54 @@ ApplyEyeMakeup/v_ApplyEyeMakeup_g01_c02.avi
 YoYo/v_YoYo_g07_c03.avi
 YoYo/v_YoYo_g07_c04.avi
 ```
+
+## UAV-Human Dataset
+
+### Download the dataset
+
+Using shell script
+
+```bash
+bash ./uav.sh
+```
+
+### Dataset Structure
+
+```
+uav/
+├── all_rgb/
+│   ├── P000S00G10B10H10UC022000LC021000A000R0_08241716.avi
+│   ├── P000S00G10B10H10UC022000LC021000A001R0_08241716.avi
+│   └── ...
+├── classes_map.csv
+└── split.json
+```
+
+### Label Format
+
+#### classes_map.csv
+
+```csv
+id,label
+A000,drink
+A001,eat snacks
+```
+
+### split.json
+
+```json
+{
+  "Cross-Subject-v1": {
+    "train": [0, 2, ...],
+    "test": [1, 3, 4, ...]
+  },
+  "Cross-Subject-v2": {
+    "train": [0, 3, 4, ...],
+    "test": [1, 2, 7, ...]
+  }
+}
+```
+
+For example, in Cross-Subject-v1, subject P000 is in train set, while subject P001 is in test set.
+
+In Cross-Subject-v2, subject P003 is in train set, while subject P002 is in test set.
