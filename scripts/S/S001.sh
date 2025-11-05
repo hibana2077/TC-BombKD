@@ -4,7 +4,7 @@
 #PBS -l ngpus=1
 #PBS -l ncpus=12
 #PBS -l mem=24GB
-#PBS -l walltime=02:00:00
+#PBS -l walltime=48:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -26,7 +26,7 @@ python3 -m polyspace.train.train_converter \
 	--epochs 10 \
 	--batch 32 \
 	--workers 1 \
-    --log_every 20 \
+    --log_every 1000 \
     --pin_memory \
 	--loss_l2 0.0 \
 	--loss_cos 0.0 \
