@@ -4,7 +4,7 @@
 #PBS -l ngpus=1
 #PBS -l ncpus=16
 #PBS -l mem=24GB
-#PBS -l walltime=05:00:00
+#PBS -l walltime=12:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -23,7 +23,7 @@ python3 -m polyspace.train.train_fusion \
     --split train \
     --student vjepa2 \
     --teachers videomae \
-    --converters ./checkpoints/S001/converters_ep10.pt \
+    --converters ./checkpoints/S001/converters_ep6.pt \
     --classes 51 \
     --frames 16 \
     --batch 8 \
