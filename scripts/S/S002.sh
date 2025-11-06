@@ -24,7 +24,7 @@ python3 -m polyspace.train.train_fusion \
     --student vjepa2 \
     --teachers videomae \
     --converters ./checkpoints/S001/converters_ep6.pt \
-    --classes 51 \
+    --classes 174 \
     --frames 16 \
     --batch 8 \
     --epochs 20 \
