@@ -8,6 +8,8 @@
 | U010-U012 | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD |
 | U013-U015 | [0.0, 0.0, 0.0, 1.0, 0.0, 0.0] | TBD | TBD |
 | U016-U018 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | TBD | TBD |
+| U019-U021 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | TBD | TBD |
+| U022-U024 | [0.0, 0.0, 1.0, 0.0, 0.0, 0.0] | TBD | TBD |
 
 ## Loss Weights
 
@@ -17,4 +19,5 @@
 
 - U001-U003: VideoMAE pre-trained on Kinetics400
 - U004-U006: TimeSformer pre-trained on ssv2
-- U007-U018: {VideoMAE, TimeSformer, Vivit} pre-trained on Kinetics400 and ssv2
+- U007-U018: {VideoMAE, TimeSformer, Vivit} pre-trained on Kinetics400 and ssv2, with Type-A converters.
+- U019-U024: {VideoMAE, TimeSformer, Vivit} pre-trained on Kinetics400 and ssv2, with Type-B converters.
