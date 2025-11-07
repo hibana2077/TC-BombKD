@@ -347,7 +347,18 @@ class SSv2Dataset(Dataset):
         # annotations
         ann_file = os.path.join(root, "labels", f"{split}.json")
         with open(ann_file, "r", encoding="utf-8") as f:
-            self.items = json.load(f)
+            items = json.load(f)
+        # Filter out samples whose textual label is not present in labels.json
+        # This commonly happens when training a subset (e.g., 51 classes) while
+        # using a full annotations file.
+        before = len(items)
+        items = [it for it in items if it.get("label") in self.label2id]
+        dropped = before - len(items)
+        if dropped > 0:
+            print(
+                f"[SSv2Dataset] Filtered out {dropped} / {before} items not in labels.json (split={split})."
+            )
+        self.items = items
         self.video_dir = os.path.join(root, "20bn-something-something-v2")
 
     def __len__(self) -> int:

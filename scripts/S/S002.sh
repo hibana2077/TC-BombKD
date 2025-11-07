@@ -23,7 +23,7 @@ python3 -m polyspace.train.train_fusion \
     --split train \
     --student vjepa2 \
     --teachers videomae \
-    --converters ./checkpoints/S001/converters_ep6.pt \
+    --converters ./checkpoints/S001/converters_ep10.pt \
     --classes 174 \
     --frames 16 \
     --batch 8 \
