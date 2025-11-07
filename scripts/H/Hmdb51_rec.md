@@ -30,9 +30,10 @@
 | H052-H056 | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | 82.19 | 95.71 |
 | H057-H061 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | 79.33 | 95.49 |
 | H062-H066 | [0.0, 0.0, 0.0, 1.0, 0.0, 0.0] | TBD | TBD |
+| H067-H071 | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD |
 
 ## Teacher Models
 
 - H001-H031: VideoMAE pre-trained on Kinetics400
 - H052-H056: {VideoMAE pre-trained on Kinetics400 | TimeSformer pre-trained on ssv2 | ViViT pre-trained on Kinetics400}
-- H062-H066: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2, but with B type converters.
+- H062-H071: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2, but with B type converters.
