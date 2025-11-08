@@ -22,9 +22,10 @@
 | D034-D036 | [0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | TBD | TBD |
 | D037-D039 | [0.0, 0.0, 0.0, 0.0, 0.0, 1.0] | TBD | TBD |
 | D040-D042 | [0.0, 0.0, 0.0, 0.0, 0.0, 1.0] | TBD | TBD |
+| D043-D045 | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD |
 
 ## Teacher Models
 
 - D001-D024: {VideoMAE pre-trained on Kinetics400 | TimeSformer pre-trained on ssv2 | ViViT pre-trained on Kinetics400} with Type-A converters.
 - D025-D039: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2 with Type-B converters.
-- D040-D042: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2 with Type-C converters.
+- D040-D045: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2 with Type-C converters.
