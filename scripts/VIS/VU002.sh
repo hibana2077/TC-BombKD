@@ -21,6 +21,7 @@ python3 -m polyspace.vis.vis_ct_orig \
   --split train \
   --student vjepa2 \
   --teachers videomae timesformer vivit \
+  --all_teachers \
   --converters ./checkpoints/U010/converters_ep10.pt \
   --frames 16 \
   --per_class 25 \

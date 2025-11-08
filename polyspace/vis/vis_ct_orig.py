@@ -349,6 +349,8 @@ def main():
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--student", type=str, default="vjepa2")
     parser.add_argument("--teachers", type=str, nargs="+", required=True, help="Teacher keys (used to select converter)")
+    parser.add_argument("--teacher", type=str, default=None, help="Select a single teacher from --teachers; if omitted, uses the first unless --all_teachers is set")
+    parser.add_argument("--all_teachers", action="store_true", help="If set, visualize for all teachers listed in --teachers")
     parser.add_argument("--converters", type=str, required=True, help="Path to converters checkpoint")
     parser.add_argument("--frames", type=int, default=16)
     parser.add_argument("--per_class", type=int, default=20, help="Number of samples per class")
@@ -370,45 +372,54 @@ def main():
     sel_classes = sorted(list({labels[i] for i in sel_idx}))
     print(f"[stage] dataset: done in {time.perf_counter()-t0:.2f}s | samples={len(sel_idx)} | classes={len(sel_classes)}")
 
-    # Load converter (pick the first teacher by default)
+    # Load converters (pick teachers according to --teacher/--all_teachers)
     t1 = time.perf_counter()
     print("[stage] load_converters: start =>", args.converters, "teachers=", args.teachers)
     convs = load_converters(args.converters, args.teachers)
-    first_teacher = args.teachers[0]
-    converter = convs[first_teacher].eval()
-    print(f"[stage] load_converters: done in {time.perf_counter()-t1:.2f}s | use teacher='{first_teacher}'")
+    # Determine which teacher(s) to use
+    if args.teacher is not None:
+        if args.teacher not in args.teachers:
+            raise ValueError(f"--teacher '{args.teacher}' must be one of --teachers {args.teachers}")
+        selected_teachers = [args.teacher]
+    elif args.all_teachers:
+        selected_teachers = list(args.teachers)
+    else:
+        selected_teachers = [args.teachers[0]]
+    print(f"[stage] load_converters: done in {time.perf_counter()-t1:.2f}s | selected={selected_teachers}")
 
-    # Compute features
-    t2 = time.perf_counter()
-    print("[stage] compute_embeddings: start | batch=", args.batch)
-    pre, post, y = compute_embeddings(ds, sel_idx, args.student, converter, batch_size=args.batch)
-    print(
-        f"[stage] compute_embeddings: done in {time.perf_counter()-t2:.2f}s | pre={pre.shape} post={post.shape}"
-    )
+    for tk in selected_teachers:
+        # Compute features
+        t2 = time.perf_counter()
+        converter = convs[tk].eval()
+        print(f"[stage] compute_embeddings: start | batch= {args.batch} | teacher={tk}")
+        pre, post, y = compute_embeddings(ds, sel_idx, args.student, converter, batch_size=args.batch)
+        print(
+            f"[stage] compute_embeddings: done in {time.perf_counter()-t2:.2f}s | pre={pre.shape} post={post.shape}"
+        )
 
-    # Dimensionality reductions
-    t3 = time.perf_counter()
-    print("[stage] dimensionality_reduction (PCA->tSNE/UMAP): start")
-    dr = fit_dr(pre, post, seed=args.seed)
-    print(f"[stage] dimensionality_reduction: done in {time.perf_counter()-t3:.2f}s")
+        # Dimensionality reductions
+        t3 = time.perf_counter()
+        print("[stage] dimensionality_reduction (PCA->tSNE/UMAP): start")
+        dr = fit_dr(pre, post, seed=args.seed)
+        print(f"[stage] dimensionality_reduction: done in {time.perf_counter()-t3:.2f}s")
 
-    # Save plots (no title/axes); legend separately
-    prefix = f"{args.dataset}_{args.split}_{first_teacher}"
-    print("[stage] save_plots: start")
-    save_scatter(dr["pre_tsne"], y, os.path.join(args.save_dir, f"{prefix}_pre_tsne.png"), sel_classes)
-    save_scatter(dr["pre_umap"], y, os.path.join(args.save_dir, f"{prefix}_pre_umap.png"), sel_classes)
-    save_scatter(dr["post_tsne"], y, os.path.join(args.save_dir, f"{prefix}_post_tsne.png"), sel_classes)
-    save_scatter(dr["post_umap"], y, os.path.join(args.save_dir, f"{prefix}_post_umap.png"), sel_classes)
-    save_legend(os.path.join(args.save_dir, f"{prefix}_legend.png"), sel_classes)
-    print("[stage] save_plots: done")
+        # Save plots (no title/axes); legend separately
+        prefix = f"{args.dataset}_{args.split}_{tk}"
+        print("[stage] save_plots: start")
+        save_scatter(dr["pre_tsne"], y, os.path.join(args.save_dir, f"{prefix}_pre_tsne.png"), sel_classes)
+        save_scatter(dr["pre_umap"], y, os.path.join(args.save_dir, f"{prefix}_pre_umap.png"), sel_classes)
+        save_scatter(dr["post_tsne"], y, os.path.join(args.save_dir, f"{prefix}_post_tsne.png"), sel_classes)
+        save_scatter(dr["post_umap"], y, os.path.join(args.save_dir, f"{prefix}_post_umap.png"), sel_classes)
+        save_legend(os.path.join(args.save_dir, f"{prefix}_legend.png"), sel_classes)
+        print("[stage] save_plots: done")
 
-    # Metrics on PCA-aligned space
-    t4 = time.perf_counter()
-    print("[stage] metrics: start")
-    metrics = compute_metrics(dr["pre_pca"], dr["post_pca"], y)
-    with open(os.path.join(args.save_dir, f"{prefix}_metrics.json"), "w", encoding="utf-8") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"[stage] metrics: done in {time.perf_counter()-t4:.2f}s")
+        # Metrics on PCA-aligned space
+        t4 = time.perf_counter()
+        print("[stage] metrics: start")
+        metrics = compute_metrics(dr["pre_pca"], dr["post_pca"], y)
+        with open(os.path.join(args.save_dir, f"{prefix}_metrics.json"), "w", encoding="utf-8") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"[stage] metrics: done in {time.perf_counter()-t4:.2f}s")
     print("Saved visualizations and metrics to:", args.save_dir)
 
 
