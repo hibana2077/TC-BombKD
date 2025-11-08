@@ -4,17 +4,39 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+# ============================================================================
+# Attention-Based Resampler
+# ============================================================================
+
 class AttnResampler(nn.Module):
     """
-    A) Latent Cross-Attention Resampler (Perceiver-IO style, lightweight).
-
-    Same-IO 模式：
-      - 輸入/輸出 shape 完全一致（含 2D 輸入）。
-      - 輸出長度跟輸入相同；不使用 learned queries。
-
-    非 Same-IO：
-      - 若提供 target_len，輸出 (B, target_len, d_out)；
-      - 否則輸出 (B, L, d_out)。
+    Latent Cross-Attention Resampler (Perceiver-IO style, lightweight).
+    
+    This module provides two modes:
+    
+    Same-IO Mode (same_io=True):
+      - Input and output shapes are identical (including 2D inputs)
+      - Output length matches input length
+      - Does not use learned queries
+      
+    Non-Same-IO Mode (same_io=False):
+      - If target_len is provided: outputs (B, target_len, d_out)
+      - Otherwise: outputs (B, L, d_out)
+    
+    Args:
+        d_in: Input feature dimension
+        d_out: Output feature dimension
+        d_lat: Latent dimension for cross-attention
+        n_lat: Number of latent tokens
+        n_layers: Number of transformer encoder layers
+        n_heads_enc: Number of attention heads in encoder
+        n_heads_dec: Number of attention heads in decoder
+        dropout: Dropout rate
+        target_len: Target sequence length (optional)
+        same_io: Enable Same-IO mode (input/output shapes match)
+        keep_spatial: Preserve 4D spatial structure if input is 4D
+        use_rope: Use rotary position embeddings (optional, for future use)
     """
 
     def __init__(
@@ -28,28 +50,31 @@ class AttnResampler(nn.Module):
         n_heads_dec: int = 8,
         dropout: float = 0.0,
         target_len: Optional[int] = None,
-        same_io: bool = False,        # ★ 新增：Same-IO 模式
-        keep_spatial: bool = True,    # ★ 新增：4D 進來就還 4D 回去
-        use_rope: bool = False,       # ★ 可選：若需要位置資訊可自行實作
+        same_io: bool = False,
+        keep_spatial: bool = True,
+        use_rope: bool = False,
     ) -> None:
         super().__init__()
         self.same_io = same_io
         self.keep_spatial = keep_spatial
         self.use_rope = use_rope
 
-        # Same-IO 下，輸出維度最終要回到 d_in
+        # Determine internal working dimension
+        # In same_io mode, output dimension must eventually return to d_in
         self.inner_d = d_out if not same_io else (d_out if d_out != d_in else d_in)
 
-        # 投影到內部工作維度（Same-IO 且 d_out==d_in 可用 Identity）
+        # Input projection to internal working dimension
+        # Use Identity if same_io mode and dimensions match
         self.in_proj = nn.Identity() if (same_io and self.inner_d == d_in) else nn.Linear(d_in, self.inner_d, bias=False)
 
-        # K/V 的內部維度
+        # Project to latent dimension for key/value
         self.kv_proj_in = nn.Linear(self.inner_d, d_lat, bias=False)
 
-        # Latent 陣列與編碼器 cross-attn
+        # Learnable latent array and encoder cross-attention
         self.latents = nn.Parameter(torch.randn(n_lat, d_lat) * 0.02)
         self.enc_xattn = nn.MultiheadAttention(d_lat, num_heads=n_heads_enc, dropout=dropout, batch_first=True)
 
+        # Transformer encoder layers for processing latents
         self.lat_blocks = nn.ModuleList(
             [
                 nn.TransformerEncoderLayer(
@@ -59,16 +84,19 @@ class AttnResampler(nn.Module):
             ]
         )
 
-        # 將 latent 投影到 decoder 的維度（與 inner_d 對齊）
+        # Project latent back to decoder dimension (aligned with inner_d)
         self.kv_proj_lat = nn.Linear(d_lat, self.inner_d, bias=False)
 
+        # Decoder cross-attention
         self.dec_xattn = nn.MultiheadAttention(self.inner_d, num_heads=n_heads_dec, dropout=dropout, batch_first=True)
 
+        # Normalization layers
         self.norm_q = nn.LayerNorm(self.inner_d)
         self.norm_kv = nn.LayerNorm(self.inner_d)
         self.norm_lat = nn.LayerNorm(d_lat)
         self.norm_out = nn.LayerNorm(self.inner_d)
 
+        # Feed-forward network
         self.ffn = nn.Sequential(
             nn.Linear(self.inner_d, 2 * self.inner_d),
             nn.GELU(),
@@ -76,13 +104,14 @@ class AttnResampler(nn.Module):
             nn.Linear(2 * self.inner_d, self.inner_d),
         )
 
-        # Same-IO：把 inner_d 投回 d_in；否則 Identity
+        # Output projection: in same_io mode, project back to d_in; otherwise Identity
         self.out_proj = (
             nn.Linear(self.inner_d, d_in, bias=False) if same_io and self.inner_d != d_in else nn.Identity()
         )
 
-        # Same-IO 下不使用 learned queries（輸入即 queries）
-        # 非 Same-IO，若 target_len 指定則使用 learned queries 產生固定長度輸出
+        # Query embeddings setup
+        # In same_io mode: no learned queries (input serves as queries)
+        # In non-same_io mode with target_len: use learned queries for fixed-length output
         self.target_len = None if same_io else target_len
         if self.target_len is not None:
             self.query_embed = nn.Parameter(torch.randn(self.target_len, self.inner_d) * 0.02)
@@ -93,7 +122,16 @@ class AttnResampler(nn.Module):
 
     @staticmethod
     def _flatten_seq(x: torch.Tensor) -> Tuple[torch.Tensor, Optional[Tuple[int, int]]]:
-        if x.dim() == 4:  # (B,H,W,C)
+        """
+        Flatten spatial dimensions to sequence.
+        
+        Args:
+            x: Input tensor of shape (B, H, W, C) or (B, L, C)
+            
+        Returns:
+            Flattened tensor (B, L, C) and optional spatial dimensions (H, W)
+        """
+        if x.dim() == 4:  # (B, H, W, C)
             B, H, W, C = x.shape
             return x.view(B, H * W, C), (H, W)
         elif x.dim() == 3:
@@ -102,62 +140,84 @@ class AttnResampler(nn.Module):
             raise ValueError(f"Expected (B,L,C) or (B,H,W,C); got {tuple(x.shape)}")
 
     def forward(self, x: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Forward pass of the attention resampler.
+        
+        Args:
+            x: Input tensor of shape (B, L, C) or (B, H, W, C)
+            key_padding_mask: Optional mask for padded positions
+            
+        Returns:
+            Resampled tensor, shape depends on configuration
+        """
         x_in = x
-        x, hw = self._flatten_seq(x)                       # (B,L,C_in), hw=None 或 (H,W)
+        x, hw = self._flatten_seq(x)  # (B, L, C_in), hw=None or (H, W)
         B, L, _ = x.shape
 
-        # 1) 輸入投影到工作維度
-        h = self.in_proj(x)                                # (B,L,inner_d)
-        kv_in = self.kv_proj_in(self.norm_kv(h))           # (B,L,d_lat)
+        # Step 1: Project input to working dimension
+        h = self.in_proj(x)  # (B, L, inner_d)
+        kv_in = self.kv_proj_in(self.norm_kv(h))  # (B, L, d_lat)
 
-        # 2) latent 編碼（latent cross-attn + encoder layers）
-        lat = self.latents.unsqueeze(0).expand(B, -1, -1)  # (B,n_lat,d_lat)
+        # Step 2: Latent encoding (latent cross-attention + encoder layers)
+        lat = self.latents.unsqueeze(0).expand(B, -1, -1)  # (B, n_lat, d_lat)
         lat = self.norm_lat(lat)
         lat, _ = self.enc_xattn(lat, kv_in, kv_in, key_padding_mask=key_padding_mask)
         for blk in self.lat_blocks:
-            lat = blk(lat)                                 # (B,n_lat,d_lat)
+            lat = blk(lat)  # (B, n_lat, d_lat)
 
-        # 3) decoder：queries 來自 learned queries（固定長度）或直接用 h（Same-IO / 跟隨長度）
-        kv = self.kv_proj_lat(lat)                         # (B,n_lat,inner_d)
+        # Step 3: Decoder - queries from learned embeddings (fixed length) or input h (same-IO / variable length)
+        kv = self.kv_proj_lat(lat)  # (B, n_lat, inner_d)
         if self.query_embed is not None:
-            queries = self.query_embed.unsqueeze(0).expand(B, -1, -1)  # (B,Lq,inner_d)
+            queries = self.query_embed.unsqueeze(0).expand(B, -1, -1)  # (B, Lq, inner_d)
         else:
-            queries = h                                    # (B,L,inner_d)
+            queries = h  # (B, L, inner_d)
 
-        # 4) cross-attn + FFN（殘差 + 正規化）
+        # Step 4: Cross-attention + FFN (with residual + normalization)
         qn = self.norm_q(queries)
         y, _ = self.dec_xattn(qn, kv, kv, key_padding_mask=None)
         y = self.dropout(y) + queries
-        y = self.norm_out(y + self.ffn(y))                 # pre/post-norm 都做一點
+        y = self.norm_out(y + self.ffn(y))
 
-        # 5) Same-IO：投回 d_in；非 Same-IO 則直接輸出 inner_d
+        # Step 5: Same-IO mode - project back to d_in; Non-same-IO - output inner_d
         if self.same_io:
-            y = self.out_proj(y)                           # (B,L,C_in)
-            # 盡量保持「值」上的相容：加一條殘差
+            y = self.out_proj(y)  # (B, L, C_in)
+            # Add residual connection to preserve original values
             if y.shape == x.shape:
-                y = y + x                                   # residual preserve
+                y = y + x  # Residual preserve
             out = y
         else:
-            out = y                                        # (B,Lq,inner_d)
+            out = y  # (B, Lq, inner_d)
 
-        # 6) 回復 4D 形狀（若輸入本來是 4D 且要求保留）
+        # Step 6: Restore 4D shape if input was 4D and keep_spatial is enabled
         if hw is not None and self.keep_spatial:
             H, W = hw
             C_out = x_in.shape[-1] if self.same_io else out.shape[-1]
             L_out = out.shape[1]
             assert L_out == H * W or (self.same_io and L_out == H * W), \
-                "Same-IO 模式下 L 必須等於 H*W；非 Same-IO 時若要回 4D 也需 Lq == H*W"
+                "In same_io mode, L must equal H*W; in non-same_io mode, Lq must equal H*W to restore 4D"
             out = out.view(B, H, W, C_out)
 
         return out
 
-# ---------- 核心元件 ----------
+
+# ============================================================================
+# Normalization Layers
+# ============================================================================
 
 class RMSNorm(nn.Module):
     """
-    RMSNorm with bounded gain + target RMS scaling
-    - target_rms: 把每個 token 的 RMS 規到固定目標（預設 1.0）
-    - max_gain  : 限制可學權重的幅度，避免放大重尾
+    RMSNorm with bounded gain and target RMS scaling.
+    
+    Features:
+    - target_rms: Normalizes each token's RMS to a fixed target (default 1.0)
+    - max_gain: Limits learnable weight magnitude to prevent heavy-tail amplification
+    
+    Args:
+        d: Feature dimension
+        eps: Small constant for numerical stability
+        gain_init: Initial value for learnable gain
+        target_rms: Target RMS value for normalization
+        max_gain: Maximum allowed gain value
     """
     def __init__(self, d: int, eps: float = 1e-6, gain_init: float = 1.0,
                  target_rms: float = 1.0, max_gain: float = 2.0):
@@ -178,11 +238,23 @@ class RMSNorm(nn.Module):
 
 class AdaptiveScaledTanh(nn.Module):
     """
-    有界且自適應的 tanh：
-      1) 逐通道（沿 B、L）估計 RMS，先把輸入規到 ~1
-      2) 再做 y = alpha * tanh(beta * x_hat)
-    - 這能對 heavy-tail 的 backbone（如 timesformer、videomae）快速抑制極端值，
-      對溫和分佈（如 vivit）則近似線性，不壓訊息。
+    Bounded and adaptive tanh activation.
+    
+    Process:
+    1. Estimate RMS per channel (across batch B and sequence L)
+    2. Normalize input to ~1
+    3. Apply y = alpha * tanh(beta * x_normalized)
+    
+    This handles heavy-tailed distributions (e.g., TimeSformer, VideoMAE) by quickly
+    suppressing extreme values, while for mild distributions (e.g., ViViT) it approximates
+    linear behavior without compressing information.
+    
+    Args:
+        d: Feature dimension
+        alpha0: Initial alpha parameter (output scale)
+        beta0: Initial beta parameter (input scale before tanh)
+        eps: Small constant for numerical stability
+        max_norm_scale: Maximum normalization scale to prevent extreme amplification
     """
     def __init__(self, d: int, alpha0: float = 2.0, beta0: float = 0.6,
                  eps: float = 1e-6, max_norm_scale: float = 10.0):
@@ -190,15 +262,22 @@ class AdaptiveScaledTanh(nn.Module):
         self.alpha = nn.Parameter(torch.ones(d) * alpha0)
         self.beta  = nn.Parameter(torch.ones(d) * beta0)
         self.eps = eps
-        self.max_norm_scale = max_norm_scale  # 避免當 RMS 很小時過度放大
+        self.max_norm_scale = max_norm_scale
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, L, d)
+        """
+        Args:
+            x: Input tensor of shape (B, L, d)
+            
+        Returns:
+            Bounded output tensor of same shape
+        """
         dtype = x.dtype
         x_fp32 = x.float()
-        # 逐通道 RMS（沿 B、L 聚合）；對 (B,1,d) 也能工作
-        inv_rms = x_fp32.pow(2).mean(dim=(0,1), keepdim=True).add(self.eps).rsqrt()  # (1,1,d)
-        inv_rms = inv_rms.clamp(max=self.max_norm_scale)  # 防極端放大
+        
+        # Per-channel RMS (aggregated across B and L); works for (B, 1, d) too
+        inv_rms = x_fp32.pow(2).mean(dim=(0, 1), keepdim=True).add(self.eps).rsqrt()  # (1, 1, d)
+        inv_rms = inv_rms.clamp(max=self.max_norm_scale)  # Prevent extreme amplification
         x_hat = x_fp32 * inv_rms
 
         a = self.alpha.view(1, 1, -1)
@@ -207,12 +286,35 @@ class AdaptiveScaledTanh(nn.Module):
         return y.to(dtype)
 
 
+# ============================================================================
+# Linear-Based Resampler
+# ============================================================================
+
 class LinearResampler(nn.Module):
     """
-    Modern/stable: RMSNorm(Pre-Norm, target RMS) + Depthwise Separable Conv + AdaptiveScaledTanh（有界）+ LayerScale
-    I/O 保持：
-      in:  (B, L, d_in) 或 (B, H, W, d_in)
-      out: (B, Lq, d_out)
+    Modern/stable linear resampler with bounded activations.
+    
+    Architecture:
+    - RMSNorm (Pre-Norm with target RMS)
+    - Depthwise Separable Convolution
+    - AdaptiveScaledTanh (bounded activation)
+    - LayerScale
+    
+    Input/Output:
+      Input:  (B, L, d_in) or (B, H, W, d_in)
+      Output: (B, Lq, d_out)
+    
+    Args:
+        d_in: Input feature dimension
+        d_out: Output feature dimension
+        k: Kernel size for depthwise convolution
+        target_len: Target sequence length (optional)
+        layerscale_init: Initial value for LayerScale gamma
+        conv_alpha0: Alpha init for conv bounded activation
+        conv_beta0: Beta init for conv bounded activation
+        mlp_alpha0: Alpha init for MLP bounded activation
+        mlp_beta0: Beta init for MLP bounded activation
+        dropout: Dropout rate
     """
     def __init__(
         self,
@@ -221,9 +323,11 @@ class LinearResampler(nn.Module):
         k: int = 7,
         target_len: Optional[int] = None,
         layerscale_init: float = 1e-3,
-        # 調整預設：加強對重尾的抑制（較大的 beta 代表更快進入飽和）
-        conv_alpha0: float = 2.5, conv_beta0: float = 0.8,
-        mlp_alpha0: float = 1.8,  mlp_beta0: float = 0.8,
+        # Adjusted defaults: stronger suppression for heavy tails (larger beta = faster saturation)
+        conv_alpha0: float = 2.5,
+        conv_beta0: float = 0.8,
+        mlp_alpha0: float = 1.8,
+        mlp_beta0: float = 0.8,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
@@ -232,30 +336,31 @@ class LinearResampler(nn.Module):
 
         self.proj = nn.Linear(d_in, d_out, bias=False)
 
-        # Depthwise-separable conv x2
+        # Depthwise-separable convolution x2
         self.dw1 = nn.Conv1d(d_out, d_out, k, padding=k // 2, groups=d_out, bias=True)
         self.pw1 = nn.Conv1d(d_out, d_out, 1, bias=True)
         self.dw2 = nn.Conv1d(d_out, d_out, k, padding=k // 2, groups=d_out, bias=True)
         self.pw2 = nn.Conv1d(d_out, d_out, 1, bias=True)
 
-        # Pre-Norm（目標 RMS = 1，限制 gain）
+        # Pre-Norm (target RMS = 1, limited gain)
         self.norm0 = RMSNorm(d_out, eps=1e-6, gain_init=1.0, target_rms=1.0, max_gain=2.0)
         self.norm1 = RMSNorm(d_out, eps=1e-6, gain_init=1.0, target_rms=1.0, max_gain=2.0)
         self.norm2 = RMSNorm(d_out, eps=1e-6, gain_init=1.0, target_rms=1.0, max_gain=2.0)
 
-        # 有界殘差（每個分支各一個）
-        self.bound0 = AdaptiveScaledTanh(d_out, alpha0=2.2, beta0=0.7)   # 投影後先做一次柔性夾幅
+        # Bounded residuals (one per branch)
+        self.bound0 = AdaptiveScaledTanh(d_out, alpha0=2.2, beta0=0.7)   # After projection, soft clipping
         self.bound1 = AdaptiveScaledTanh(d_out, alpha0=conv_alpha0, beta0=conv_beta0)
         self.bound2 = AdaptiveScaledTanh(d_out, alpha0=mlp_alpha0,  beta0=mlp_beta0)
 
-        # LayerScale：小 γ 把殘差貢獻壓低，之後學習放大
+        # LayerScale: small gamma reduces residual contribution, then learns to scale up
         self.gamma1 = nn.Parameter(torch.ones(d_out) * layerscale_init)
         self.gamma2 = nn.Parameter(torch.ones(d_out) * layerscale_init)
 
+        # Feed-forward network
         hidden = int(2.0 * d_out)
         self.mlp = nn.Sequential(
             nn.Linear(d_out, hidden),
-            nn.SiLU(),  # 內部仍可用 SiLU，最終由 AdaptiveScaledTanh 夾住
+            nn.SiLU(),  # Internal activation can still use SiLU, final bounded by AdaptiveScaledTanh
             nn.Linear(hidden, d_out),
         )
 
@@ -263,10 +368,11 @@ class LinearResampler(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
+        """Initialize parameters for stable training."""
         nn.init.kaiming_normal_(self.dw1.weight, nonlinearity='linear')
         nn.init.kaiming_normal_(self.pw1.weight, nonlinearity='linear')
         nn.init.kaiming_normal_(self.dw2.weight, nonlinearity='linear')
-        # 讓第二個 pointwise 起始約等於 0，殘差穩定
+        # Second pointwise layer starts near zero for stable residual
         nn.init.zeros_(self.pw2.weight)
         if self.pw2.bias is not None:
             nn.init.zeros_(self.pw2.bias)
@@ -276,6 +382,15 @@ class LinearResampler(nn.Module):
 
     @staticmethod
     def _flatten_seq(x: torch.Tensor) -> Tuple[torch.Tensor, Optional[Tuple[int, int]]]:
+        """
+        Flatten spatial dimensions to sequence.
+        
+        Args:
+            x: Input tensor of shape (B, H, W, C) or (B, L, C)
+            
+        Returns:
+            Flattened tensor (B, L, C) and optional spatial dimensions (H, W)
+        """
         if x.dim() == 4:
             B, H, W, C = x.shape
             return x.view(B, H * W, C), (H, W)
@@ -286,43 +401,82 @@ class LinearResampler(nn.Module):
 
     @staticmethod
     def _interp_len(h: torch.Tensor, Lq: int) -> torch.Tensor:
-        x = h.transpose(1, 2)                  # (B, d, L)
+        """
+        Interpolate sequence length.
+        
+        Args:
+            h: Input tensor of shape (B, L, d)
+            Lq: Target sequence length
+            
+        Returns:
+            Interpolated tensor of shape (B, Lq, d)
+        """
+        x = h.transpose(1, 2)  # (B, d, L)
         x = F.interpolate(x, size=Lq, mode="linear", align_corners=False)
-        return x.transpose(1, 2)               # (B, Lq, d)
+        return x.transpose(1, 2)  # (B, Lq, d)
 
     def _conv_block(self, h: torch.Tensor) -> torch.Tensor:
-        y = self.norm1(h)                      # Pre-Norm (RMS -> target 1.0)
-        y = y.transpose(1, 2)                  # (B, d, Lq)
+        """Depthwise separable convolution block with residual connection."""
+        y = self.norm1(h)  # Pre-Norm (RMS -> target 1.0)
+        y = y.transpose(1, 2)  # (B, d, Lq)
         y = self.pw1(F.silu(self.dw1(y)))
         y = self.pw2(F.silu(self.dw2(y)))
-        y = y.transpose(1, 2)                  # (B, Lq, d)
-        y = self.bound1(y)                     # 有界輸出
+        y = y.transpose(1, 2)  # (B, Lq, d)
+        y = self.bound1(y)  # Bounded output
         return h + self.dropout(y) * self.gamma1
 
     def _mlp_block(self, h: torch.Tensor) -> torch.Tensor:
+        """MLP block with residual connection."""
         y = self.norm2(h)
         y = self.mlp(y)
-        y = self.bound2(y)                     # 有界輸出
+        y = self.bound2(y)  # Bounded output
         return h + self.dropout(y) * self.gamma2
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+        
+        Args:
+            x: Input tensor of shape (B, L, d_in) or (B, H, W, d_in)
+            
+        Returns:
+            Resampled tensor of shape (B, Lq, d_out)
+        """
         x, _ = self._flatten_seq(x)
         B, L, _ = x.shape
         Lq = self.target_len or L
+        
+        # Project and normalize
         h = self.proj(x)
-        h = self.norm0(h)                      # 投影後先規一到目標 RMS
-        h = self.bound0(h)                     # 再做柔性夾幅，抑制極端值
+        h = self.norm0(h)  # Normalize to target RMS after projection
+        h = self.bound0(h)  # Soft clipping to suppress extremes
+        
+        # Resample to target length
         h = self._interp_len(h, Lq)
+        
+        # Apply conv and MLP blocks
         h = self._conv_block(h)
         h = self._mlp_block(h)
         return h
 
+
+# ============================================================================
+# Simple Single-Layer Resampler
+# ============================================================================
+
 class SingleLinearResampler(nn.Module):
     """
-    C) Single Linear Layer Resampler.
-
-    Accepts (B, L, d_in) or (B, H, W, d_in).
-    Outputs (B, Lq, d_out) where Lq = target_len if specified, else L.
+    Single Linear Layer Resampler.
+    
+    A minimal resampler with just one linear projection and optional length interpolation.
+    
+    Input:  (B, L, d_in) or (B, H, W, d_in)
+    Output: (B, Lq, d_out) where Lq = target_len if specified, else L
+    
+    Args:
+        d_in: Input feature dimension
+        d_out: Output feature dimension
+        target_len: Target sequence length (optional)
     """
 
     def __init__(self, d_in: int, d_out: int, target_len: Optional[int] = None) -> None:
@@ -333,6 +487,15 @@ class SingleLinearResampler(nn.Module):
 
     @staticmethod
     def _flatten_seq(x: torch.Tensor) -> Tuple[torch.Tensor, Optional[Tuple[int, int]]]:
+        """
+        Flatten spatial dimensions to sequence.
+        
+        Args:
+            x: Input tensor of shape (B, H, W, C) or (B, L, C)
+            
+        Returns:
+            Flattened tensor (B, L, C) and optional spatial dimensions (H, W)
+        """
         if x.dim() == 4:
             B, H, W, C = x.shape
             return x.view(B, H * W, C), (H, W)
@@ -343,11 +506,30 @@ class SingleLinearResampler(nn.Module):
 
     @staticmethod
     def _interp_len(h: torch.Tensor, Lq: int) -> torch.Tensor:
-        x = h.transpose(1, 2)                  # (B, d, L)
+        """
+        Interpolate sequence length.
+        
+        Args:
+            h: Input tensor of shape (B, L, d)
+            Lq: Target sequence length
+            
+        Returns:
+            Interpolated tensor of shape (B, Lq, d)
+        """
+        x = h.transpose(1, 2)  # (B, d, L)
         x = F.interpolate(x, size=Lq, mode="linear", align_corners=False)
-        return x.transpose(1, 2)               # (B, Lq, d)
+        return x.transpose(1, 2)  # (B, Lq, d)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+        
+        Args:
+            x: Input tensor of shape (B, L, d_in) or (B, H, W, d_in)
+            
+        Returns:
+            Resampled tensor of shape (B, Lq, d_out)
+        """
         x, _ = self._flatten_seq(x)
         B, L, _ = x.shape
         Lq = self.target_len or L
@@ -355,7 +537,30 @@ class SingleLinearResampler(nn.Module):
         h = self._interp_len(h, Lq)
         return h
 
+
+# ============================================================================
+# Converter Factory Function
+# ============================================================================
+
 def build_converter(kind: str, d_in: int, d_out: int, **kwargs) -> nn.Module:
+    """
+    Factory function to build different types of converters.
+    
+    Args:
+        kind: Type of converter to build. Options:
+            - "a", "attn_resampler", "perceiver", "latent_xattn": AttnResampler
+            - "b", "linear_resampler", "dsconv": LinearResampler
+            - "c", "single_linear", "singlelinear": SingleLinearResampler
+        d_in: Input feature dimension
+        d_out: Output feature dimension
+        **kwargs: Additional arguments passed to the converter constructor
+        
+    Returns:
+        Initialized converter module
+        
+    Note:
+        Defaults to LinearResampler if kind is not recognized
+    """
     kind = kind.lower()
     if kind in {"a", "attn_resampler", "perceiver", "latent_xattn"}:
         return AttnResampler(d_in=d_in, d_out=d_out, **kwargs)
