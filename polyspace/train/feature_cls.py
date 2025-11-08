@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -255,21 +256,33 @@ def fit_eval_ar(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.n
         mlow = m.lower()
         if mlow in {"svm", "svc", "linearsvc"}:
             clf = make_pipeline(StandardScaler(with_mean=True), LinearSVC(max_iter=5000))
+            t0 = time.time()
             clf.fit(X_tr, y_tr)
+            train_time = time.time() - t0
+            t0 = time.time()
             pred = clf.predict(X_te)
+            test_time = time.time() - t0
             acc = float(accuracy_score(y_te, pred))
             results["svm"] = {
                 "top1": acc,
+                "train_time": train_time,
+                "test_time": test_time,
                 "report": classification_report(y_te, pred, zero_division=0, output_dict=False),
             }
         elif mlow in {"lr", "logreg", "logistic"}:
             clf = make_pipeline(StandardScaler(with_mean=True),
                                 LogisticRegression(max_iter=2000, n_jobs=-1))
+            t0 = time.time()
             clf.fit(X_tr, y_tr)
+            train_time = time.time() - t0
+            t0 = time.time()
             pred = clf.predict(X_te)
+            test_time = time.time() - t0
             acc = float(accuracy_score(y_te, pred))
             results["lr"] = {
                 "top1": acc,
+                "train_time": train_time,
+                "test_time": test_time,
                 "report": classification_report(y_te, pred, zero_division=0, output_dict=False),
             }
         else:
@@ -305,17 +318,25 @@ def fit_eval_vad(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.
         if mlow in {"iforest", "isolationforest"}:
             pipe = make_pipeline(StandardScaler(with_mean=True), IsolationForest(contamination=iforest_contam, random_state=0))
             # IsolationForest ignores y
+            t0 = time.time()
             pipe.fit(X_tr)
+            train_time = time.time() - t0
             # anomaly score: the higher, the more abnormal -> use negative of score_samples
             # sklearn: score_samples: higher means more normal; decision_function: higher means more normal
             # We'll use neg-score_samples for AUROC (higher = more anomalous)
             # Extract last step to compute decision on scaled input
             scaler: StandardScaler = pipe.named_steps["standardscaler"]
             model: IsolationForest = pipe.named_steps["isolationforest"]
+            t0 = time.time()
             X_te_s = scaler.transform(X_te)
             scores = -model.score_samples(X_te_s)
             preds = (model.predict(X_te_s) == -1).astype(np.int64)
-            res: Dict[str, Any] = {"anomaly_rate": float(preds.mean())}
+            test_time = time.time() - t0
+            res: Dict[str, Any] = {
+                "anomaly_rate": float(preds.mean()),
+                "train_time": train_time,
+                "test_time": test_time,
+            }
             if y_te_bin is not None:
                 res.update({
                     "auroc": float(roc_auc_score(y_te_bin, scores)),
@@ -327,8 +348,10 @@ def fit_eval_vad(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.
             # Fit DBSCAN on train normals (labels ignored). Predict anomaly on test by distance to core samples
             scaler = StandardScaler(with_mean=True)
             X_tr_s = scaler.fit_transform(X_tr)
+            t0 = time.time()
             db = DBSCAN(eps=dbscan_eps, min_samples=dbscan_min_samples)
             db.fit(X_tr_s)
+            train_time = time.time() - t0
             # Core samples
             core = db.components_ if hasattr(db, "components_") else X_tr_s[db.core_sample_indices_]
             if core.shape[0] == 0:
@@ -336,15 +359,19 @@ def fit_eval_vad(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.
                 core = X_tr_s
             # Nearest neighbor distance to any core sample
             nbrs = NearestNeighbors(n_neighbors=1).fit(core)
+            t0 = time.time()
             X_te_s = scaler.transform(X_te)
             dists, _ = nbrs.kneighbors(X_te_s)
             dists = dists.reshape(-1)
             # Mark as anomaly if outside eps neighborhood
             preds = (dists > dbscan_eps).astype(np.int64)
+            test_time = time.time() - t0
             res = {
                 "anomaly_rate": float(preds.mean()),
                 "avg_nn_dist": float(dists.mean()),
                 "med_nn_dist": float(np.median(dists)),
+                "train_time": train_time,
+                "test_time": test_time,
             }
             if y_te_bin is not None:
                 # Use neg distance as score (higher => more anomalous)
@@ -418,6 +445,8 @@ def main():
         for name, info in res.items():
             print(f"== {name.upper()} ==")
             print(f"Top-1 acc: {info['top1']*100:.2f}%")
+            print(f"Train time: {info['train_time']:.2f}s")
+            print(f"Test time: {info['test_time']:.4f}s")
             print(info["report"])
     else:
         print("[VAD] Fitting and evaluating:", ", ".join(args.vad_models))
@@ -434,6 +463,11 @@ def main():
                 if isinstance(v, float):
                     if k in {"auroc", "auprc", "top1"}:
                         print(f"{k}: {v*100:.2f}%")
+                    elif k in {"train_time", "test_time"}:
+                        if k == "train_time":
+                            print(f"{k}: {v:.2f}s")
+                        else:
+                            print(f"{k}: {v:.4f}s")
                     else:
                         print(f"{k}: {v:.4f}")
                 else:
