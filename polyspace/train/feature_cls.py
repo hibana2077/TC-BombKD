@@ -11,12 +11,12 @@ Feature sources:
 
 CLI summary (see --help for details):
   python -m polyspace.train.feature_cls --task ar \
-      --train path/to/features_train.pkl --test path/to/features_val.pkl \
-      --feat student --ar_models svm lr
+      --train path/to/features_train.index.json --test path/to/features_val.index.json \
+      --feature vjepa2 --ar_models svm lr
 
   python -m polyspace.train.feature_cls --task vad \
-      --train path/to/features_train.pkl --test path/to/features_test.pkl \
-      --feat conv:videomae --converters ckpts/conv.pth --teachers videomae \
+      --train path/to/features_train.index.json --test path/to/features_test.index.json \
+      --feature conv:videomae --converters ckpts/conv.pth --teachers videomae \
       --vad_models dbscan iforest --normal_class 0
 """
 
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -38,14 +38,7 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import DBSCAN
 
 # Local utilities
-from .inspect_features import load_meta
 from .eval_downstream import load_converters
-
-
-def _ensure_2d(x: np.ndarray) -> np.ndarray:
-    if x.ndim == 1:
-        return x.reshape(1, -1)
-    return x
 
 
 def _pool_sequence(feat: Any, how: str = "mean") -> np.ndarray:
@@ -70,91 +63,188 @@ def _concat(feats: List[np.ndarray]) -> np.ndarray:
     return np.concatenate(feats, axis=0)
 
 
-def _parse_feat_spec(specs: Sequence[str]) -> List[Tuple[str, Optional[str]]]:
-    """Parse feature spec tokens into list of (mode, key) tuples.
+def _parse_single_feat(spec: str) -> Tuple[str, Optional[str]]:
+    """Parse a single feature spec token into (mode, key).
     Accepted tokens:
-      - "student"
-      - "teacher:<name>"
-      - "conv:<teacher_name>"
-    Returns list where mode in {student, teacher, conv}; key is teacher name for the latter two, else None.
+      - "vjepa2" (alias of previous "student")
+      - "timesformer", "videomae", "vivit"
+      - "conv:<teacher_name>" -> apply converter on V-JEPA2 features to emulate teacher_name
+    Returns (mode, key) where mode in {vjepa2, direct, conv} and key holds the backbone name for direct/conv.
     """
-    out: List[Tuple[str, Optional[str]]] = []
-    for s in specs:
-        s = (s or "").strip()
-        if s == "" or s.lower() == "student":
-            out.append(("student", None))
-        elif s.lower().startswith("teacher:"):
-            out.append(("teacher", s.split(":", 1)[1]))
-        elif s.lower().startswith("conv:"):
-            out.append(("conv", s.split(":", 1)[1]))
-        else:
-            # Backward-compat: bare teacher name -> teacher:key
-            out.append(("teacher", s))
-    return out
+    s = (spec or "").strip().lower()
+    if s in {"vjepa2", "student"}:  # keep backward compatibility
+        return ("vjepa2", "vjepa2")
+    if s in {"timesformer", "videomae", "vivit"}:
+        return ("direct", s)
+    if s.startswith("conv:"):
+        return ("conv", s.split(":", 1)[1])
+    # Also accept bare teacher names as direct
+    return ("direct", s)
 
 
-def _build_vectors_from_meta(meta: List[Dict[str, Any]],
-                             feat_specs: Sequence[str],
-                             pooling: str = "mean",
-                             converters: Optional[torch.nn.ModuleDict] = None,
-                             device: Optional[torch.device] = None) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-    """Build X, y from meta records according to feature specs.
-
-    If 'conv:<tname>' is requested, 'converters' must be provided and meta must include 'student' features.
-    Returns (X [N,D], y [N], paths [N]).
+def _record_to_vector(rec: Dict[str, Any], mode: str, key: Optional[str], pooling: str,
+                      converters: Optional[torch.nn.ModuleDict], device: Optional[torch.device]) -> np.ndarray:
+    """Extract a single vector from one record according to the feature mode.
+    - vjepa2: use rec["student"] (backward-compatible naming)
+    - direct: use rec[key]
+    - conv: apply converters[key] on rec["student"]
     """
-    parsed = _parse_feat_spec(feat_specs)
-    use_conv = any(m == "conv" for (m, _) in parsed)
-    if use_conv and converters is None:
-        raise ValueError("Converters required for conv:* feature specs")
+    if mode == "vjepa2":
+        if "student" not in rec:
+            raise KeyError("Record missing 'student' (vjepa2) feature")
+        return _pool_sequence(rec["student"], pooling)
+    if mode == "direct":
+        assert key is not None
+        if key not in rec:
+            raise KeyError(f"Record missing feature '{key}'")
+        return _pool_sequence(rec[key], pooling)
+    if mode == "conv":
+        assert key is not None and converters is not None
+        if "student" not in rec:
+            raise KeyError("Record missing 'student' for converter input")
+        if key not in converters:
+            raise KeyError(f"Converter for '{key}' not found")
+        with torch.no_grad():
+            z = torch.from_numpy(np.asarray(rec["student"]))
+            if z.ndim == 1:
+                z = z[None, :]
+            if device is None:
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            converters.to(device).eval()
+            z = z.to(device)
+            pred = converters[key](z[None, ...])[0].detach().cpu().numpy()
+        return _pool_sequence(pred, pooling)
+    raise ValueError(f"Unknown feature mode '{mode}'")
 
-    X: List[np.ndarray] = []
-    y: List[int] = []
-    paths: List[str] = []
 
-    # Lazy torch setup only when needed
-    if use_conv:
-        if device is None:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        assert converters is not None
-        converters.to(device)
-        converters.eval()
+# -------- Streaming IO over feature files (shards/index) --------
+def stream_records(path: str) -> Iterator[Dict[str, Any]]:
+    """Yield records one-by-one from a features path.
+    Supports:
+      - directory of shards (*.pkl with _shard_)
+      - index json pointing to shards
+      - single .pkl or .json list (loads whole file once)
+    """
+    # Directory of shards
+    if os.path.isdir(path):
+        files = sorted([f for f in os.listdir(path) if f.endswith('.pkl') and '_shard_' in f])
+        for fn in files:
+            import pickle
+            with open(os.path.join(path, fn), 'rb') as f:
+                part = pickle.load(f)
+            for rec in part:
+                yield rec
+        return
+    # Index JSON
+    if path.lower().endswith('.index.json'):
+        import json
+        base_dir = os.path.dirname(path)
+        with open(path, 'r', encoding='utf-8') as f:
+            idx = json.load(f)
+        for sh in idx.get('shards', []):
+            fp = os.path.join(base_dir, sh['file'])
+            import pickle
+            with open(fp, 'rb') as f:
+                part = pickle.load(f)
+            for rec in part:
+                yield rec
+        return
+    # Single files
+    if path.lower().endswith('.pkl'):
+        import pickle
+        with open(path, 'rb') as f:
+            part = pickle.load(f)
+        for rec in part:
+            yield rec
+        return
+    # JSON list
+    import json
+    with open(path, 'r', encoding='utf-8') as f:
+        part = json.load(f)
+    for rec in part:
+        yield rec
 
-    for rec in meta:
-        parts: List[np.ndarray] = []
-        for mode, key in parsed:
-            if mode == "student":
-                if "student" not in rec:
-                    raise KeyError("Record missing 'student' feature")
-                parts.append(_pool_sequence(rec["student"], pooling))
-            elif mode == "teacher":
-                if key not in rec:
-                    raise KeyError(f"Record missing teacher feature '{key}'")
-                parts.append(_pool_sequence(rec[key], pooling))
-            elif mode == "conv":
-                if "student" not in rec:
-                    raise KeyError("Record missing 'student' for converter input")
-                if key not in converters:
-                    raise KeyError(f"Converter for teacher '{key}' not found in loaded checkpoint")
-                # Apply converter on per-clip sequence [T,D] -> [T,D_out] then pool
-                with torch.no_grad():
-                    z = torch.from_numpy(np.asarray(rec["student"]))  # [T,D]
-                    if z.ndim == 1:
-                        z = z[None, :]
-                    z = z.to(device)
-                    pred = converters[key](z[None, ...])  # [1,T,D']
-                    pred = pred[0].detach().cpu().numpy()
-                parts.append(_pool_sequence(pred, pooling))
-            else:
-                raise ValueError(f"Unknown feat mode '{mode}'")
 
-        X.append(_concat(parts))
-        y.append(int(rec.get("label", -1)))
-        paths.append(str(rec.get("path", "")))
+def count_records(path: str) -> int:
+    if os.path.isdir(path):
+        # Sum per-shard lengths (requires reading each shard head)
+        n = 0
+        for rec in stream_records(path):
+            n += 1
+        return n
+    if path.lower().endswith('.index.json'):
+        import json
+        with open(path, 'r', encoding='utf-8') as f:
+            idx = json.load(f)
+        if 'num_samples' in idx and isinstance(idx['num_samples'], int) and idx['num_samples'] > 0:
+            return int(idx['num_samples'])
+        # Fallback: iterate
+        n = 0
+        for _ in stream_records(path):
+            n += 1
+        return n
+    # Single file: load and count
+    n = 0
+    for _ in stream_records(path):
+        n += 1
+    return n
 
-    X_arr = np.stack(X, axis=0)
-    y_arr = np.asarray(y, dtype=np.int64)
-    return X_arr, y_arr, paths
+
+def build_arrays_memmap(path: str, feature: str, pooling: str,
+                        converters: Optional[torch.nn.ModuleDict], device: Optional[torch.device],
+                        task: str) -> Tuple[np.memmap, np.ndarray, Tuple[int, int]]:
+    """Materialize features to a disk-backed memmap to avoid high RAM.
+    Returns (X_mm, y_np, shape) where shape=(N,D).
+    For AR task, only labeled samples (y>=0) are included to reduce size.
+    """
+    mode, key = _parse_single_feat(feature)
+
+    # Determine N quickly when possible and the first vector dimension D
+    total = count_records(path)
+    # Pass 1: determine dimension and count (with AR filtering if needed)
+    D: Optional[int] = None
+    N: int = 0
+    for rec in stream_records(path):
+        yi = int(rec.get("label", -1))
+        if task == "ar" and yi < 0:
+            continue
+        try:
+            vec = _record_to_vector(rec, mode, key, pooling, converters, device)
+        except Exception:
+            continue
+        if D is None:
+            D = int(vec.shape[0])
+        N += 1
+    if D is None or N == 0:
+        raise RuntimeError("No usable features found to build arrays")
+
+    # Create memmap on disk
+    import tempfile
+    tmp_dir = tempfile.mkdtemp(prefix="featcls_")
+    x_path = os.path.join(tmp_dir, "X.dat")
+    X_mm = np.memmap(x_path, dtype=np.float32, mode='w+', shape=(N, D))
+    y_np = np.empty((N,), dtype=np.int64)
+
+    # Pass 2: fill
+    i = 0
+    for rec in stream_records(path):
+        yi = int(rec.get("label", -1))
+        if task == "ar" and yi < 0:
+            continue
+        try:
+            vec = _record_to_vector(rec, mode, key, pooling, converters, device)
+        except Exception:
+            continue
+        if vec.shape[0] != D:
+            # Skip irregular vectors
+            continue
+        X_mm[i, :] = vec.astype(np.float32, copy=False)
+        y_np[i] = yi
+        i += 1
+        if i >= N:
+            break
+    X_mm.flush()
+    return X_mm, y_np, (N, D)
 
 
 def fit_eval_ar(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.ndarray,
@@ -274,10 +364,12 @@ def fit_eval_vad(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.
 def main():
     parser = argparse.ArgumentParser(description="Feature-level classification (AR) and anomaly detection (VAD)")
     parser.add_argument("--task", type=str, required=True, choices=["ar", "vad"], help="Task: action recognition (ar) or video anomaly detection (vad)")
-    # Feature inputs
+    # Feature inputs (single feature per run)
     parser.add_argument("--train", type=str, required=True, help="Path to TRAIN features (.pkl / .index.json / shard dir)")
     parser.add_argument("--test", type=str, required=True, help="Path to TEST features (.pkl / .index.json / shard dir)")
-    parser.add_argument("--feat", type=str, nargs="+", default=["student"], help="Feature specs: student | teacher:<name> | conv:<teacher>")
+    parser.add_argument("--feature", type=str, required=False, help="One feature: vjepa2 | timesformer | videomae | vivit | conv:<teacher>")
+    # Backward-compat: allow --feat but enforce single value
+    parser.add_argument("--feat", type=str, nargs="*", default=None, help="[Deprecated] use --feature; if provided, only the first value will be used")
     parser.add_argument("--pool", type=str, default="mean", choices=["mean", "max"], help="Temporal pooling")
     # Converter (optional)
     parser.add_argument("--converters", type=str, default=None, help="Path to converters checkpoint (for conv:*)")
@@ -297,23 +389,32 @@ def main():
         if not (os.path.isfile(p) or os.path.isdir(p)):
             raise FileNotFoundError(f"Features path not found: {p}")
 
-    meta_tr = load_meta(args.train)
-    meta_te = load_meta(args.test)
+    # Resolve feature name
+    feat_token: Optional[str] = args.feature
+    if feat_token is None and args.feat:
+        if len(args.feat) != 1:
+            raise SystemExit("Please specify exactly one feature (use --feature or a single value for --feat)")
+        feat_token = args.feat[0]
+        print("[warn] --feat is deprecated; use --feature instead.")
+    if not feat_token:
+        raise SystemExit("--feature is required")
 
+    # Load converters only if conv:* is requested
     converters = None
-    if any(s.lower().startswith("conv:") for s in args.feat):
+    if feat_token.lower().startswith("conv:"):
         if args.converters is None or args.teachers is None or len(args.teachers) == 0:
             raise SystemExit("conv:* requested but --converters and --teachers not provided")
         converters = load_converters(args.converters, args.teachers)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    X_tr, y_tr, _ = _build_vectors_from_meta(meta_tr, args.feat, pooling=args.pool, converters=converters, device=device)
-    X_te, y_te, _ = _build_vectors_from_meta(meta_te, args.feat, pooling=args.pool, converters=converters, device=device)
+    # Build memory-mapped arrays to control RAM usage
+    X_tr, y_tr, (n_tr, d) = build_arrays_memmap(args.train, feat_token, args.pool, converters, device, task=args.task)
+    X_te, y_te, (n_te, _) = build_arrays_memmap(args.test, feat_token, args.pool, converters, device, task=args.task)
 
     if args.task.lower() == "ar":
         print("[AR] Training and evaluating classifiers:", ", ".join(args.ar_models))
-        res = fit_eval_ar(X_tr, y_tr, X_te, y_te, args.ar_models)
+        res = fit_eval_ar(np.asarray(X_tr), y_tr, np.asarray(X_te), y_te, args.ar_models)
         for name, info in res.items():
             print(f"== {name.upper()} ==")
             print(f"Top-1 acc: {info['top1']*100:.2f}%")
@@ -321,7 +422,7 @@ def main():
     else:
         print("[VAD] Fitting and evaluating:", ", ".join(args.vad_models))
         res = fit_eval_vad(
-            X_tr, y_tr, X_te, y_te, args.vad_models,
+            np.asarray(X_tr), y_tr, np.asarray(X_te), y_te, args.vad_models,
             normal_class=args.normal_class,
             dbscan_eps=args.dbscan_eps,
             dbscan_min_samples=args.dbscan_min_samples,

@@ -19,5 +19,5 @@ python3 -m polyspace.train.feature_cls \
   --task ar \
   --train ./features/features_hmdb51_train.index.json \
   --test ./features/features_hmdb51_test.index.json \
-  --feat student \
+  --feature vjepa2 \
   --ar_models svm lr >> ABL001.log 2>&1
