@@ -203,8 +203,11 @@ def build_arrays_memmap(path: str, feature: str, pooling: str,
     # Determine N quickly when possible and the first vector dimension D
     total = count_records(path)
     # Pass 1: determine dimension and count (with AR filtering if needed)
+    # IMPORTANT: Only count records whose vector dimension matches the first observed D.
+    # Otherwise we would allocate extra rows that never get filled (remaining zeros / random labels -> bad training).
     D: Optional[int] = None
     N: int = 0
+    skipped_dim: int = 0
     for rec in stream_records(path):
         yi = int(rec.get("label", -1))
         if task == "ar" and yi < 0:
@@ -215,7 +218,12 @@ def build_arrays_memmap(path: str, feature: str, pooling: str,
             continue
         if D is None:
             D = int(vec.shape[0])
-        N += 1
+            N += 1
+        else:
+            if vec.shape[0] == D:
+                N += 1
+            else:
+                skipped_dim += 1
     if D is None or N == 0:
         raise RuntimeError("No usable features found to build arrays")
 
@@ -226,7 +234,7 @@ def build_arrays_memmap(path: str, feature: str, pooling: str,
     X_mm = np.memmap(x_path, dtype=np.float32, mode='w+', shape=(N, D))
     y_np = np.empty((N,), dtype=np.int64)
 
-    # Pass 2: fill
+    # Pass 2: fill (guaranteed at most N rows match dimension)
     i = 0
     for rec in stream_records(path):
         yi = int(rec.get("label", -1))
@@ -237,7 +245,6 @@ def build_arrays_memmap(path: str, feature: str, pooling: str,
         except Exception:
             continue
         if vec.shape[0] != D:
-            # Skip irregular vectors
             continue
         X_mm[i, :] = vec.astype(np.float32, copy=False)
         y_np[i] = yi
@@ -245,7 +252,17 @@ def build_arrays_memmap(path: str, feature: str, pooling: str,
         if i >= N:
             break
     X_mm.flush()
-    return X_mm, y_np, (N, D)
+    if i < N:
+        # Slice down to actual populated size (avoid exposing zero rows)
+        X_view = X_mm[:i]
+        y_view = y_np[:i]
+        N = i
+    else:
+        X_view = X_mm
+        y_view = y_np
+    if skipped_dim > 0:
+        print(f"[info] Skipped {skipped_dim} records due to dimension mismatch (kept D={D}). Final N={N}.")
+    return X_view, y_view, (N, D)
 
 
 def fit_eval_ar(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.ndarray,
@@ -270,8 +287,9 @@ def fit_eval_ar(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.n
                 "report": classification_report(y_te, pred, zero_division=0, output_dict=False),
             }
         elif mlow in {"lr", "logreg", "logistic"}:
+            # Remove n_jobs (not a valid param for some sklearn versions) to avoid silent failures.
             clf = make_pipeline(StandardScaler(with_mean=True),
-                                LogisticRegression(max_iter=2000, n_jobs=-1))
+                                LogisticRegression(max_iter=2000))
             t0 = time.time()
             clf.fit(X_tr, y_tr)
             train_time = time.time() - t0
@@ -440,6 +458,18 @@ def main():
     X_te, y_te, (n_te, _) = build_arrays_memmap(args.test, feat_token, args.pool, converters, device, task=args.task)
 
     if args.task.lower() == "ar":
+        # Sanity diagnostics for AR
+        tr_classes, tr_counts = np.unique(y_tr[y_tr >= 0], return_counts=True)
+        te_classes, te_counts = np.unique(y_te[y_te >= 0], return_counts=True)
+        overlap = sorted(set(tr_classes.tolist()) & set(te_classes.tolist()))
+        print(f"[AR] Train samples: {n_tr} | Test samples: {n_te} | Feature dim: {d}")
+        print(f"[AR] Train classes ({len(tr_classes)}): {tr_classes.tolist()} counts={tr_counts.tolist()}")
+        print(f"[AR] Test classes ({len(te_classes)}):  {te_classes.tolist()} counts={te_counts.tolist()}")
+        print(f"[AR] Overlap classes ({len(overlap)}): {overlap}")
+        if len(overlap) == 0:
+            print("[warn] No class overlap between train and test -> accuracy will be 0.")
+        if len(tr_classes) < 2:
+            print("[warn] Only one class in training data -> classifier cannot learn discrimination.")
         print("[AR] Training and evaluating classifiers:", ", ".join(args.ar_models))
         res = fit_eval_ar(np.asarray(X_tr), y_tr, np.asarray(X_te), y_te, args.ar_models)
         for name, info in res.items():
