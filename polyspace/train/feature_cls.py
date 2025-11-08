@@ -254,7 +254,7 @@ def fit_eval_ar(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.n
     for m in models:
         mlow = m.lower()
         if mlow in {"svm", "svc", "linearsvc"}:
-            clf = make_pipeline(StandardScaler(with_mean=True), LinearSVC())
+            clf = make_pipeline(StandardScaler(with_mean=True), LinearSVC(max_iter=5000))
             clf.fit(X_tr, y_tr)
             pred = clf.predict(X_te)
             acc = float(accuracy_score(y_te, pred))
@@ -264,7 +264,7 @@ def fit_eval_ar(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.n
             }
         elif mlow in {"lr", "logreg", "logistic"}:
             clf = make_pipeline(StandardScaler(with_mean=True),
-                                LogisticRegression(max_iter=2000, n_jobs=None, multi_class="auto"))
+                                LogisticRegression(max_iter=2000, n_jobs=None))
             clf.fit(X_tr, y_tr)
             pred = clf.predict(X_te)
             acc = float(accuracy_score(y_te, pred))
