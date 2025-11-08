@@ -24,7 +24,7 @@ python3 -m polyspace.train.train_fusion \
     --converters ./checkpoints/UH004/converters_ep10.pt \
     --classes 155 \
     --frames 16 \
-    --batch 8 \
+    --batch 4 \
     --epochs 50 \
     --lr 3e-4 \
     --save_dir ./checkpoints/UH005 >> UH005.log 2>&1
