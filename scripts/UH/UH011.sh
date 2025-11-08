@@ -22,9 +22,9 @@ python3 -m polyspace.train.train_fusion \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
     --converters ./checkpoints/UH010/converters_ep10.pt \
-    --classes 48 \
+    --classes 155 \
     --frames 16 \
-    --batch 8 \
+    --batch 4 \
     --epochs 50 \
     --lr 3e-4 \
     --save_dir ./checkpoints/UH011 >> UH011.log 2>&1
