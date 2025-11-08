@@ -101,6 +101,7 @@ def compute_embeddings(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     student = build_backbone(student_name)
     student.to(device).eval()
+    # Ensure converter is on the same target device
     converter = converter.to(device).eval()
     pre_list: List[np.ndarray] = []
     post_list: List[np.ndarray] = []
@@ -113,9 +114,14 @@ def compute_embeddings(
     torch.set_grad_enabled(False)
     for chunk in _batches(subset, batch_size):
         batch = collate_fn(chunk)
-        vid = batch["video"].float().div(255.0).to(device)
+        # Move video to the working device
+        vid = batch["video"].float().div(255.0).to(device, non_blocking=True)
         y = batch["label"].cpu().numpy()
         z0 = student(vid)["feat"]  # (B, N0, D0)
+        # Safety: enforce that the features are on the same device as the converter
+        conv_device = next(converter.parameters()).device
+        if isinstance(z0, torch.Tensor) and z0.device != conv_device:
+            z0 = z0.to(conv_device, non_blocking=True)
         pre = pool_sequence(z0).detach().cpu().numpy()  # (B, D0)
         zhat = converter(z0)
         post = pool_sequence(zhat).detach().cpu().numpy()  # (B, D1)
