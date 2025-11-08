@@ -2,6 +2,7 @@ import os
 import json
 import math
 import random
+import time
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -99,8 +100,8 @@ def compute_embeddings(
     # Simple manual batching to avoid writing a custom Dataset wrapper here
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     student = build_backbone(student_name)
-    student.to(device)
-    converter = converter.to(device)
+    student.to(device).eval()
+    converter = converter.to(device).eval()
     pre_list: List[np.ndarray] = []
     post_list: List[np.ndarray] = []
     y_list: List[int] = []
@@ -355,34 +356,53 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
 
     # Build dataset and select indices
+    t0 = time.perf_counter()
+    print("[stage] dataset: start =>", args.dataset, args.split)
     ds = build_dataset(args.dataset, args.root, args.split, args.frames)
     labels = [int(ds[i]["label"]) for i in range(len(ds))]
     sel_idx = select_indices_by_class(labels, per_class=args.per_class, max_classes=args.max_classes)
     sel_classes = sorted(list({labels[i] for i in sel_idx}))
+    print(f"[stage] dataset: done in {time.perf_counter()-t0:.2f}s | samples={len(sel_idx)} | classes={len(sel_classes)}")
 
     # Load converter (pick the first teacher by default)
+    t1 = time.perf_counter()
+    print("[stage] load_converters: start =>", args.converters, "teachers=", args.teachers)
     convs = load_converters(args.converters, args.teachers)
     first_teacher = args.teachers[0]
     converter = convs[first_teacher].eval()
+    print(f"[stage] load_converters: done in {time.perf_counter()-t1:.2f}s | use teacher='{first_teacher}'")
 
     # Compute features
+    t2 = time.perf_counter()
+    print("[stage] compute_embeddings: start | batch=", args.batch)
     pre, post, y = compute_embeddings(ds, sel_idx, args.student, converter, batch_size=args.batch)
+    print(
+        f"[stage] compute_embeddings: done in {time.perf_counter()-t2:.2f}s | pre={pre.shape} post={post.shape}"
+    )
 
     # Dimensionality reductions
+    t3 = time.perf_counter()
+    print("[stage] dimensionality_reduction (PCA->tSNE/UMAP): start")
     dr = fit_dr(pre, post, seed=args.seed)
+    print(f"[stage] dimensionality_reduction: done in {time.perf_counter()-t3:.2f}s")
 
     # Save plots (no title/axes); legend separately
     prefix = f"{args.dataset}_{args.split}_{first_teacher}"
+    print("[stage] save_plots: start")
     save_scatter(dr["pre_tsne"], y, os.path.join(args.save_dir, f"{prefix}_pre_tsne.png"), sel_classes)
     save_scatter(dr["pre_umap"], y, os.path.join(args.save_dir, f"{prefix}_pre_umap.png"), sel_classes)
     save_scatter(dr["post_tsne"], y, os.path.join(args.save_dir, f"{prefix}_post_tsne.png"), sel_classes)
     save_scatter(dr["post_umap"], y, os.path.join(args.save_dir, f"{prefix}_post_umap.png"), sel_classes)
     save_legend(os.path.join(args.save_dir, f"{prefix}_legend.png"), sel_classes)
+    print("[stage] save_plots: done")
 
     # Metrics on PCA-aligned space
+    t4 = time.perf_counter()
+    print("[stage] metrics: start")
     metrics = compute_metrics(dr["pre_pca"], dr["post_pca"], y)
     with open(os.path.join(args.save_dir, f"{prefix}_metrics.json"), "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
+    print(f"[stage] metrics: done in {time.perf_counter()-t4:.2f}s")
     print("Saved visualizations and metrics to:", args.save_dir)
 
 
