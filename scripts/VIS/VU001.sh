@@ -8,6 +8,7 @@ source /scratch/rp06/sl5952/TC-BombKD/.venv/bin/activate
 export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
+cd ../..
 python3 -m polyspace.vis.vis_ct_orig \
   --dataset ucf101 \
   --root ./datasets/UCF101 \
@@ -20,4 +21,4 @@ python3 -m polyspace.vis.vis_ct_orig \
   --max_classes 12 \
   --batch 8 \
   --seed 42 \
-  --save_dir ./VU001 >> VU001.log 2>&1
+  --save_dir ./VIS/VU001 >> VU001.log 2>&1
