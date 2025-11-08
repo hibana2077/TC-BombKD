@@ -317,26 +317,19 @@ class LinearResampler(nn.Module):
         h = self._mlp_block(h)
         return h
 
-class TokenLearnerResampler(nn.Module):
-    """D) TokenLearner + cross-attention decoder.
-
-    - Learns K informative tokens via soft selection over the input sequence
-    - Decodes to target_len tokens using a lightweight MultiheadAttention
+class SingleLinearResampler(nn.Module):
+    """
+    C) Single Linear Layer Resampler.
 
     Accepts (B, L, d_in) or (B, H, W, d_in).
+    Outputs (B, Lq, d_out) where Lq = target_len if specified, else L.
     """
 
-    def __init__(self, d_in: int, d_out: int, K: int = 256, target_len: Optional[int] = None, n_heads: int = 8) -> None:
+    def __init__(self, d_in: int, d_out: int, target_len: Optional[int] = None) -> None:
         super().__init__()
-        assert target_len is not None, "TokenLearnerResampler requires a fixed target_len"
         self.d_out = d_out
-        self.K = K
         self.target_len = target_len
-        self.score = nn.Sequential(nn.Linear(d_in, 256), nn.GELU(), nn.Linear(256, K))
-        self.in_proj = nn.Linear(d_in, d_out, bias=False)
-        self.dec = nn.MultiheadAttention(d_out, num_heads=n_heads, batch_first=True)
-        self.query_embed = nn.Parameter(torch.randn(target_len, d_out) * 0.02)
-        self.out_norm = nn.LayerNorm(d_out)
+        self.proj = nn.Linear(d_in, d_out)
 
     @staticmethod
     def _flatten_seq(x: torch.Tensor) -> Tuple[torch.Tensor, Optional[Tuple[int, int]]]:
@@ -348,17 +341,19 @@ class TokenLearnerResampler(nn.Module):
         else:
             raise ValueError(f"Expected input of shape (B,L,C) or (B,H,W,C); got {tuple(x.shape)}")
 
+    @staticmethod
+    def _interp_len(h: torch.Tensor, Lq: int) -> torch.Tensor:
+        x = h.transpose(1, 2)                  # (B, d, L)
+        x = F.interpolate(x, size=Lq, mode="linear", align_corners=False)
+        return x.transpose(1, 2)               # (B, Lq, d)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x, _ = self._flatten_seq(x)
         B, L, _ = x.shape
-        w = self.score(x).softmax(dim=1)  # (B, L, K)
-        z_in = self.in_proj(x)  # (B, L, d_out)
-        # Weighted aggregation into K tokens
-        z = torch.einsum("blf,blk->bkf", z_in, w)  # (B, K, d_out)
-        queries = self.query_embed.unsqueeze(0).expand(B, -1, -1)  # (B, Lq, d_out)
-        y, _ = self.dec(queries, z, z)
-        return self.out_norm(y)
-
+        Lq = self.target_len or L
+        h = self.proj(x)
+        h = self._interp_len(h, Lq)
+        return h
 
 def build_converter(kind: str, d_in: int, d_out: int, **kwargs) -> nn.Module:
     kind = kind.lower()
@@ -366,7 +361,7 @@ def build_converter(kind: str, d_in: int, d_out: int, **kwargs) -> nn.Module:
         return AttnResampler(d_in=d_in, d_out=d_out, **kwargs)
     elif kind in {"b", "linear_resampler", "dsconv"}:
         return LinearResampler(d_in=d_in, d_out=d_out, **kwargs)
-    elif kind in {"d", "token_learner", "tokenlearner"}:
-        return TokenLearnerResampler(d_in=d_in, d_out=d_out, **kwargs)
+    elif kind in {"c", "single_linear", "singlelinear"}:
+        return SingleLinearResampler(d_in=d_in, d_out=d_out, **kwargs)
     # Default to linear resampler for robustness
     return LinearResampler(d_in=d_in, d_out=d_out, **kwargs)
