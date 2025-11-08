@@ -386,11 +386,27 @@ if __name__ == "__main__":
     parser.add_argument("--pin_memory", action="store_true", help="Pin CPU memory for faster H2D copies (uses more host RAM)")
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--save_dir", type=str, default="./checkpoints/converters")
-    parser.add_argument("--kind", type=str, default="mlp", choices=[
-        "a", "attn_resampler", "perceiver", "latent_xattn",
-        "b", "linear_resampler", "dsconv",
-        "d", "token_learner", "tokenlearner",
-    ], help="Converter architecture to use")
+    parser.add_argument(
+        "--kind",
+        type=str,
+        default="mlp",
+        choices=[
+            # A: Latent cross-attn resampler
+            "a",
+            "attn_resampler",
+            "perceiver",
+            "latent_xattn",
+            # B: Depthwise-separable conv resampler
+            "b",
+            "linear_resampler",
+            "dsconv",
+            # C: Single linear layer resampler
+            "c",
+            "single_linear",
+            "singlelinear",
+        ],
+        help="Converter architecture to use",
+    )
     parser.add_argument("--teacher_lens", type=int, nargs="*", help="Optional per-teacher target lengths, same order as --teachers")
     parser.add_argument("--token_k", type=int, default=None, help="K tokens for TokenLearner (only used for kind D)")
     parser.add_argument("--log_every", type=int, default=50, help="Print training log every N batches instead of tqdm")
