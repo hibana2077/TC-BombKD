@@ -2,9 +2,11 @@
 # Visualization job for pre/post converter embeddings
 # Adapt queue directives as needed for local or cluster environment.
 
-module load cuda/12.6.2 2>/dev/null || true
-source /scratch/rp06/sl5952/TC-BombKD/.venv/bin/activate 2>/dev/null || true
-export HF_HOME="${HF_HOME:-./.cache}"  # fallback local cache
+module load cuda/12.6.2
+module load ffmpeg/4.1.3
+source /scratch/rp06/sl5952/TC-BombKD/.venv/bin/activate
+export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
+export HF_HUB_OFFLINE=1
 
 python3 -m polyspace.vis.vis_ct_orig \
   --dataset ucf101 \
@@ -18,4 +20,4 @@ python3 -m polyspace.vis.vis_ct_orig \
   --max_classes 12 \
   --batch 8 \
   --seed 42 \
-  --save_dir ./VU001 >> V_U_001.log 2>&1
+  --save_dir ./VU001 >> VU001.log 2>&1
