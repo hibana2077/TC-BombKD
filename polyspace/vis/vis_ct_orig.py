@@ -177,15 +177,22 @@ def _get_colors(n: int) -> List[Tuple[float, float, float]]:
     return [cmap(i % 20)[:3] for i in range(n)]
 
 
-def save_scatter(xy: np.ndarray, y: np.ndarray, save_path: str, labels: List[int]):
+def save_scatter(
+    xy: np.ndarray,
+    y: np.ndarray,
+    save_path: str,
+    labels: List[int],
+    dpi: int = 200,
+    marker_size: float = 6.0,
+):
     # Plot without title/axes/ticks
-    plt.figure(figsize=(8, 8), dpi=200)
+    plt.figure(figsize=(8, 8), dpi=dpi)
     colors = _get_colors(len(labels))
     for i, cid in enumerate(labels):
         mask = (y == cid)
         if not np.any(mask):
             continue
-        plt.scatter(xy[mask, 0], xy[mask, 1], s=6, color=colors[i], label=str(cid), alpha=0.8)
+        plt.scatter(xy[mask, 0], xy[mask, 1], s=marker_size, color=colors[i], label=str(cid), alpha=0.8)
     plt.xticks([])
     plt.yticks([])
     for spine in plt.gca().spines.values():
@@ -195,10 +202,10 @@ def save_scatter(xy: np.ndarray, y: np.ndarray, save_path: str, labels: List[int
     plt.close()
 
 
-def save_legend(save_path: str, labels: List[int]):
-    plt.figure(figsize=(6, 6), dpi=200)
+def save_legend(save_path: str, labels: List[int], dpi: int = 200, marker_size: float = 6.0):
+    plt.figure(figsize=(6, 6), dpi=dpi)
     colors = _get_colors(len(labels))
-    handles = [plt.Line2D([0], [0], marker='o', color='w', label=str(cid), markerfacecolor=colors[i], markersize=6)
+    handles = [plt.Line2D([0], [0], marker='o', color='w', label=str(cid), markerfacecolor=colors[i], markersize=marker_size)
                for i, cid in enumerate(labels)]
     ax = plt.gca()
     ax.axis('off')
@@ -358,6 +365,13 @@ def main():
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save_dir", type=str, default="./vis")
+    parser.add_argument("--dpi", type=int, default=200, help="Figure DPI (resolution) for saved plots")
+    parser.add_argument(
+        "--marker_size",
+        type=float,
+        default=6.0,
+        help="Marker size used in scatter and legend (matplotlib 's' / markersize units)",
+    )
     args = parser.parse_args()
 
     _set_seed(args.seed)
@@ -406,11 +420,39 @@ def main():
         # Save plots (no title/axes); legend separately
         prefix = f"{args.dataset}_{args.split}_{tk}"
         print("[stage] save_plots: start")
-        save_scatter(dr["pre_tsne"], y, os.path.join(args.save_dir, f"{prefix}_pre_tsne.png"), sel_classes)
-        save_scatter(dr["pre_umap"], y, os.path.join(args.save_dir, f"{prefix}_pre_umap.png"), sel_classes)
-        save_scatter(dr["post_tsne"], y, os.path.join(args.save_dir, f"{prefix}_post_tsne.png"), sel_classes)
-        save_scatter(dr["post_umap"], y, os.path.join(args.save_dir, f"{prefix}_post_umap.png"), sel_classes)
-        save_legend(os.path.join(args.save_dir, f"{prefix}_legend.png"), sel_classes)
+        save_scatter(
+            dr["pre_tsne"],
+            y,
+            os.path.join(args.save_dir, f"{prefix}_pre_tsne.png"),
+            sel_classes,
+            dpi=args.dpi,
+            marker_size=args.marker_size,
+        )
+        save_scatter(
+            dr["pre_umap"],
+            y,
+            os.path.join(args.save_dir, f"{prefix}_pre_umap.png"),
+            sel_classes,
+            dpi=args.dpi,
+            marker_size=args.marker_size,
+        )
+        save_scatter(
+            dr["post_tsne"],
+            y,
+            os.path.join(args.save_dir, f"{prefix}_post_tsne.png"),
+            sel_classes,
+            dpi=args.dpi,
+            marker_size=args.marker_size,
+        )
+        save_scatter(
+            dr["post_umap"],
+            y,
+            os.path.join(args.save_dir, f"{prefix}_post_umap.png"),
+            sel_classes,
+            dpi=args.dpi,
+            marker_size=args.marker_size,
+        )
+        save_legend(os.path.join(args.save_dir, f"{prefix}_legend.png"), sel_classes, dpi=args.dpi, marker_size=args.marker_size)
         print("[stage] save_plots: done")
 
         # Metrics on PCA-aligned space

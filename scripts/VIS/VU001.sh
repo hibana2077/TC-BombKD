@@ -22,6 +22,7 @@ python3 -m polyspace.vis.vis_ct_orig \
   --student vjepa2 \
   --teachers videomae timesformer vivit \
   --all_teachers \
+  --marker_size 180 \
   --converters ./checkpoints/U025/converters_ep10.pt \
   --frames 16 \
   --per_class 25 \
