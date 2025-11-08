@@ -17,7 +17,7 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.feature_cls \
   --task ar \
-  --train features/features_hmdb51_train.pkl \
-  --test features/features_hmdb51_test.pkl \
+  --train ./features/features_hmdb51_train.index.json \
+  --test ./features/features_hmdb51_test.index.json \
   --feat student \
   --ar_models svm lr >> ABL001.log 2>&1
