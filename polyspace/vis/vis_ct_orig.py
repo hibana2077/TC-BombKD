@@ -192,7 +192,7 @@ def save_scatter(
         mask = (y == cid)
         if not np.any(mask):
             continue
-        plt.scatter(xy[mask, 0], xy[mask, 1], s=marker_size, color=colors[i], label=str(cid), alpha=0.8, marker='x', edgecolors='black', linewidths=0.5)
+        plt.scatter(xy[mask, 0], xy[mask, 1], s=marker_size, color=colors[i], label=str(cid), alpha=0.8, marker='*', edgecolors='black', linewidths=1.5)
     plt.xticks([])
     plt.yticks([])
     for spine in plt.gca().spines.values():
@@ -205,7 +205,7 @@ def save_scatter(
 def save_legend(save_path: str, labels: List[int], dpi: int = 200, marker_size: float = 6.0):
     plt.figure(figsize=(6, 6), dpi=dpi)
     colors = _get_colors(len(labels))
-    handles = [plt.Line2D([0], [0], marker='x', color='w', label=str(cid), markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=0.5, markersize=marker_size)
+    handles = [plt.Line2D([0], [0], marker='*', color='w', label=str(cid), markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=1.5, markersize=marker_size)
                for i, cid in enumerate(labels)]
     ax = plt.gca()
     ax.axis('off')
