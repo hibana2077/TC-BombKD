@@ -1,8 +1,8 @@
 #!/bin/bash
 #PBS -P rp06
-#PBS -q dgxa100
+#PBS -q gpuvolta
 #PBS -l ngpus=1
-#PBS -l ncpus=16
+#PBS -l ncpus=12
 #PBS -l mem=32GB
 #PBS -l walltime=48:00:00
 #PBS -l wd
@@ -24,7 +24,7 @@ python3 -m polyspace.train.train_fusion \
     --converters ./checkpoints/UH001/converters_ep10.pt \
     --classes 155 \
     --frames 16 \
-    --batch 8 \
+    --batch 4 \
     --epochs 50 \
     --lr 3e-4 \
     --save_dir ./checkpoints/UH002 >> UH002.log 2>&1

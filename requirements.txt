@@ -20,3 +20,4 @@ thop
 transformers
 huggingface_hub
 gdown
+umap-learn
