@@ -1,6 +1,12 @@
 #!/bin/bash
-# Visualization job for pre/post converter embeddings
-# Adapt queue directives as needed for local or cluster environment.
+#PBS -P rp06
+#PBS -q gpuvolta
+#PBS -l ngpus=1
+#PBS -l ncpus=12
+#PBS -l mem=24GB
+#PBS -l walltime=05:40:00
+#PBS -l wd
+#PBS -l storage=scratch/rp06
 
 module load cuda/12.6.2
 module load ffmpeg/4.1.3
