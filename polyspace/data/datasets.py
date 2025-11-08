@@ -344,21 +344,55 @@ class SSv2Dataset(Dataset):
             label_map = json.load(f)
         # id mapping str->int
         self.label2id = {k: int(v) for k, v in label_map.items()}
+        # Also keep a case-insensitive lookup to normalize variants
+        self.label2id_lower = {k.lower(): int(v) for k, v in label_map.items()}
         # annotations
         ann_file = os.path.join(root, "labels", f"{split}.json")
         with open(ann_file, "r", encoding="utf-8") as f:
             items = json.load(f)
-        # Filter out samples whose textual label is not present in labels.json
-        # This commonly happens when training a subset (e.g., 51 classes) while
-        # using a full annotations file.
+        # The raw Something-Something v2 annotations use per-instance 'label' like
+        # "covering eraser with tissue" while labels.json contains canonical pattern
+        # strings (either with or without [something] placeholders), e.g.
+        # "Covering something with something" or "Covering [something] with [something]".
+        # We therefore attempt several normalization fallbacks to recover a class id.
         before = len(items)
-        items = [it for it in items if it.get("label") in self.label2id]
-        dropped = before - len(items)
+        kept: List[Dict[str, Any]] = []
+        for it in items:
+            raw = it.get("label") or ""
+            tmpl = it.get("template") or ""
+            candidates: List[str] = []
+            if raw:
+                candidates.append(raw)
+            if tmpl:
+                candidates.append(tmpl)
+                # Replace bracketed tokens with plain 'something'
+                norm = tmpl.replace("[something]", "something").replace("[Something]", "something")
+                candidates.append(norm)
+                # Remove brackets entirely
+                no_br = tmpl.replace("[", "").replace("]", "")
+                candidates.append(no_br)
+            found_id: Optional[int] = None
+            chosen_label: Optional[str] = None
+            for c in candidates:
+                if c in self.label2id:
+                    found_id = self.label2id[c]
+                    chosen_label = c
+                    break
+                cl = c.lower()
+                if cl in self.label2id_lower:
+                    found_id = self.label2id_lower[cl]
+                    chosen_label = c  # keep original casing
+                    break
+            if found_id is not None:
+                # Overwrite 'label' field with canonical label string used for mapping
+                it["label"] = chosen_label
+                kept.append(it)
+        dropped = before - len(kept)
         if dropped > 0:
-            print(
-                f"[SSv2Dataset] Filtered out {dropped} / {before} items not in labels.json (split={split})."
-            )
-        self.items = items
+            print(f"[SSv2Dataset] Filtered out {dropped} / {before} items not matched to labels.json (split={split}).")
+        if not kept:
+            print("[SSv2Dataset][warn] No items matched any label; check labels.json format or normalization logic.")
+        self.items = kept
         self.video_dir = os.path.join(root, "20bn-something-something-v2")
 
     def __len__(self) -> int:
@@ -373,7 +407,11 @@ class SSv2Dataset(Dataset):
             alt = os.path.join(self.video_dir, f"{vid_id}.mp4")
             vpath = alt if os.path.isfile(alt) else vpath
         label_text = it.get("label")
-        label = self.label2id[label_text] if label_text in self.label2id else -1
+        # Attempt faster direct mapping; fall back to case-insensitive
+        if label_text in self.label2id:
+            label = self.label2id[label_text]
+        else:
+            label = self.label2id_lower.get(label_text.lower(), -1) if isinstance(label_text, str) else -1
         # probe frames
         try:
             container = av.open(vpath)
