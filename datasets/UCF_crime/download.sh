@@ -12,7 +12,7 @@ echo "Changing to download directory..."
 cd ~/datasets/UCF-Crime
 
 # Download the dataset zip file
-echo "Downloading UCF_Crimes.zip from http://crcv.ucf.edu/data1/chenchen/UCF_Crimes.zip"
+echo "Downloading UCF_Crimes.zip from official source..."
 wget --continue --tries=3 --timeout=30 http://crcv.ucf.edu/data1/chenchen/UCF_Crimes.zip -O UCF-Crime.zip
 
 # Check if download was successful
