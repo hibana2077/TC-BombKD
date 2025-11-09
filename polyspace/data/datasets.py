@@ -386,17 +386,55 @@ class SSv2Dataset(Dataset):
         else:
             raise ValueError(f"Unsupported labels.json format at {labels_path}")
 
-        # annotations
+        # annotations (train/validation have template; test may only have ids)
         ann_file = os.path.join(root, "labels", f"{split}.json")
         with open(ann_file, "r", encoding="utf-8") as f:
             items = json.load(f)
+
+        # Special handling for test split: test.json may only contain video ids.
+        id_to_answer: Dict[str, str] = {}
+        if split.lower().startswith("test"):
+            # Expected format per user: lines like '152570;Tipping something over'
+            # Try common filename variants.
+            for cand in ["test-answers.csv", "test_answers.csv", "test-answers.txt"]:
+                ans_path = os.path.join(root, "labels", cand)
+                if os.path.isfile(ans_path):
+                    try:
+                        with open(ans_path, "r", encoding="utf-8") as af:
+                            for line in af:
+                                line = line.strip()
+                                if not line or line.startswith("#"):
+                                    continue
+                                parts = line.split(";", 1)
+                                if len(parts) != 2:
+                                    # fallback: maybe comma separated
+                                    parts = line.split(",", 1)
+                                    if len(parts) != 2:
+                                        continue
+                                vid_raw, label_txt = parts[0].strip(), parts[1].strip()
+                                if vid_raw:
+                                    id_to_answer[str(vid_raw)] = label_txt
+                    except Exception as e:
+                        print(f"[SSv2Dataset][warn] Failed parsing answers file {ans_path}: {e}")
+                    break  # stop after first existing file
+            if not id_to_answer:
+                print(f"[SSv2Dataset] No test-answers.csv found under {os.path.join(root,'labels')} for split={split}.")
         # Build items using ONLY 'id' and 'template'
         before = len(items)
         kept: List[Dict[str, Any]] = []
         miss = 0
         for it in items:
-            vid = it.get("id")
-            tmpl = it.get("template")
+            # test.json might be list of dicts with only {'id': <id>} OR just raw ids.
+            if isinstance(it, dict):
+                vid = it.get("id")
+                tmpl = it.get("template")
+            else:
+                # If element is plain id (str/int)
+                vid = it
+                tmpl = None
+            # For test split, fill template from answers file if missing
+            if tmpl is None and split.lower().startswith("test") and vid is not None:
+                tmpl = id_to_answer.get(str(vid))
             if vid is None or tmpl is None:
                 miss += 1
                 continue
