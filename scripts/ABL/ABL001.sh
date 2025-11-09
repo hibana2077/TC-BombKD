@@ -20,4 +20,5 @@ python3 -m polyspace.train.feature_cls \
   --train ./features/features_hmdb51_train.index.json \
   --test ./features/features_hmdb51_test.index.json \
   --feature vjepa2 \
+  --remap_by_order \
   --ar_models svm lr >> ABL001.log 2>&1
