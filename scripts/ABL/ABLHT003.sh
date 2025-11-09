@@ -15,14 +15,6 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
-# python3 -m polyspace.train.feature_cls \
-#   --task ar \
-#   --train ./features/features_hmdb51_train.index.json \
-#   --test ./features/features_hmdb51_test.index.json \
-#   --feature vivit \
-#   --remap_by_order \
-#   --ar_models svm lr >> ABL005.log 2>&1
-
 python3 -m polyspace.train.feature_cls \
     --task ar \
     --train ./features/features_hmdb51_train.index.json \
@@ -31,4 +23,4 @@ python3 -m polyspace.train.feature_cls \
     --converters ./checkpoints/H051/converters_ep10.pt \
     --teachers vivit \
     --remap_by_order \
-    --ar_models svm lr >> ABL005.log 2>&1
+    --ar_models svm lr >> ABLHT003.log 2>&1
