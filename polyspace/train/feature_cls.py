@@ -111,8 +111,14 @@ def _record_to_vector(rec: Dict[str, Any], mode: str, key: Optional[str], poolin
                 z = z[None, :]
             if device is None:
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # Ensure modules and inputs are on the same device and dtype
             converters.to(device).eval()
-            z = z.to(device)
+            # Match input dtype to converter weights (avoid Half/Float mismatch)
+            try:
+                weight_dtype = next(converters[key].parameters()).dtype
+            except StopIteration:
+                weight_dtype = torch.float32
+            z = z.to(device=device, dtype=weight_dtype, non_blocking=True)
             pred = converters[key](z[None, ...])[0].detach().cpu().numpy()
         return _pool_sequence(pred, pooling)
     raise ValueError(f"Unknown feature mode '{mode}'")
@@ -208,13 +214,30 @@ def build_arrays_memmap(path: str, feature: str, pooling: str,
     D: Optional[int] = None
     N: int = 0
     skipped_dim: int = 0
+    skipped_unlabeled: int = 0
+    err_missing_student: int = 0
+    err_missing_conv_key: int = 0
+    err_missing_direct_key: int = 0
+    err_forward: int = 0
+    total_scanned: int = 0
     for rec in stream_records(path):
+        total_scanned += 1
         yi = int(rec.get("label", -1))
         if task == "ar" and yi < 0:
+            skipped_unlabeled += 1
             continue
         try:
             vec = _record_to_vector(rec, mode, key, pooling, converters, device)
-        except Exception:
+        except Exception as e:
+            msg = str(e)
+            if isinstance(e, KeyError) and "student" in msg:
+                err_missing_student += 1
+            elif isinstance(e, KeyError) and "Converter for" in msg:
+                err_missing_conv_key += 1
+            elif isinstance(e, KeyError) and ("Record missing feature" in msg or "missing feature" in msg):
+                err_missing_direct_key += 1
+            else:
+                err_forward += 1
             continue
         if D is None:
             D = int(vec.shape[0])
@@ -225,7 +248,13 @@ def build_arrays_memmap(path: str, feature: str, pooling: str,
             else:
                 skipped_dim += 1
     if D is None or N == 0:
-        raise RuntimeError("No usable features found to build arrays")
+        diag = (
+            f"No usable features found to build arrays. "
+            f"Scanned={total_scanned}, kept=0, unlabeled_skipped={skipped_unlabeled}, "
+            f"err_missing_student={err_missing_student}, err_missing_converter={err_missing_conv_key}, "
+            f"err_missing_feature={err_missing_direct_key}, forward_errors={err_forward}."
+        )
+        raise RuntimeError(diag)
 
     # Create memmap on disk
     import tempfile
@@ -450,8 +479,15 @@ def main():
     # Load converters only if conv:* is requested
     converters = None
     if feat_token.lower().startswith("conv:"):
-        if args.converters is None or args.teachers is None or len(args.teachers) == 0:
-            raise SystemExit("conv:* requested but --converters and --teachers not provided")
+        # If teachers not provided, infer from feature token
+        mode, key = _parse_single_feat(feat_token)
+        if (args.teachers is None) or (len(args.teachers) == 0):
+            if key is None or str(key).strip() == "":
+                raise SystemExit("conv:* requested but could not infer teacher key; please pass --teachers")
+            args.teachers = [key]
+            print(f"[info] --teachers not provided; inferred from --feature: {args.teachers}")
+        if args.converters is None:
+            raise SystemExit("conv:* requested but --converters not provided")
         converters = load_converters(args.converters, args.teachers)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
