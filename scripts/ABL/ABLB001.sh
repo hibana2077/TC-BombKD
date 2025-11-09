@@ -17,8 +17,8 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.feature_cls \
   --task ar \
-  --train ./features/features_diving48_train.index.json \
-  --test ./features/features_diving48_test.index.json \
+  --train ./features/features_breakfast_train.index.json \
+  --test ./features/features_breakfast_test.index.json \
   --feature timesformer \
   --remap_by_order \
-  --ar_models svm lr >> ABLD001.log 2>&1
+  --ar_models svm lr >> ABLB001.log 2>&1

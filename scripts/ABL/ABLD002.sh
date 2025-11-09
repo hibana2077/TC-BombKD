@@ -21,4 +21,4 @@ python3 -m polyspace.train.feature_cls \
   --test ./features/features_diving48_test.index.json \
   --feature vjepa2 \
   --remap_by_order \
-  --ar_models svm lr >> ABLD001.log 2>&1
+  --ar_models svm lr >> ABLD002.log 2>&1
