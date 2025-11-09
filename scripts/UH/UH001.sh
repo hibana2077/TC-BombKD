@@ -32,3 +32,5 @@ python3 -m polyspace.train.train_converter \
 	--loss_bar 0.0 \
 	--loss_l1 0.0 \
 	--save_dir ./checkpoints/UH001 >> UH001.log 2>&1
+
+# Finish
