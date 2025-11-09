@@ -30,4 +30,5 @@ python3 -m polyspace.train.feature_cls \
     --feature conv:vivit \
     --converters ./checkpoints/H051/converters_ep10.pt \
     --teachers vivit \
+    --remap_by_order \
     --ar_models svm lr >> ABL005.log 2>&1
