@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+import re
 
 
 def _safe_int(x: Any, default: int = 0) -> int:
@@ -331,7 +332,10 @@ class SSv2Dataset(Dataset):
       root/
         20bn-something-something-v2/*.webm
         labels/{labels.json,train.json,validation.json,test.json}
-    For training/validation, uses label text mapping to integers via labels.json.
+    Label resolution uses ONLY 'id' and 'template' from split JSONs, ignoring
+    'label' and 'placeholders'. We normalize templates by replacing
+    "[something]" (case-insensitive) with "something" and then look them up in
+    labels.json to get a stable class id.
     """
 
     def __init__(self, root: str, split: str = "train", num_frames: int = 16) -> None:
@@ -341,57 +345,75 @@ class SSv2Dataset(Dataset):
         self.num_frames = num_frames
         labels_path = os.path.join(root, "labels", "labels.json")
         with open(labels_path, "r", encoding="utf-8") as f:
-            label_map = json.load(f)
-        # id mapping str->int
-        self.label2id = {k: int(v) for k, v in label_map.items()}
-        # Also keep a case-insensitive lookup to normalize variants
-        self.label2id_lower = {k.lower(): int(v) for k, v in label_map.items()}
+            raw_label_map = json.load(f)
+
+        # Build a mapping from NORMALIZED template text -> integer id
+        # Accept common formats for labels.json
+        def _normalize_template(t: str) -> str:
+            if not isinstance(t, str):
+                t = str(t)
+            # Replace bracket tokens like [something] or [Something] with 'something'
+            t = re.sub(r"\[(?i:something)\]", "something", t)
+            # Collapse whitespace and lowercase for stable matching
+            t = " ".join(t.split()).strip().lower()
+            return t
+
+        label2id_norm: Dict[str, int] = {}
+        if isinstance(raw_label_map, dict):
+            # Try both orientations and pick the one where value looks numeric
+            for k, v in raw_label_map.items():
+                # Case A: {label_string: id}
+                vid = None
+                try:
+                    vid = int(v)
+                except Exception:
+                    vid = None
+                if vid is not None:
+                    label2id_norm[_normalize_template(k)] = vid
+                    continue
+                # Case B: {id: label_string}
+                try:
+                    ik = int(k)
+                except Exception:
+                    ik = None
+                if ik is not None and isinstance(v, str):
+                    label2id_norm[_normalize_template(v)] = ik
+        elif isinstance(raw_label_map, list):
+            # If it's a simple list of label strings, index becomes the id (0-based)
+            for i, s in enumerate(raw_label_map):
+                if isinstance(s, str):
+                    label2id_norm[_normalize_template(s)] = i
+        else:
+            raise ValueError(f"Unsupported labels.json format at {labels_path}")
+
         # annotations
         ann_file = os.path.join(root, "labels", f"{split}.json")
         with open(ann_file, "r", encoding="utf-8") as f:
             items = json.load(f)
-        # The raw Something-Something v2 annotations use per-instance 'label' like
-        # "covering eraser with tissue" while labels.json contains canonical pattern
-        # strings (either with or without [something] placeholders), e.g.
-        # "Covering something with something" or "Covering [something] with [something]".
-        # We therefore attempt several normalization fallbacks to recover a class id.
+        # Build items using ONLY 'id' and 'template'
         before = len(items)
         kept: List[Dict[str, Any]] = []
+        miss = 0
         for it in items:
-            raw = it.get("label") or ""
-            tmpl = it.get("template") or ""
-            candidates: List[str] = []
-            if raw:
-                candidates.append(raw)
-            if tmpl:
-                candidates.append(tmpl)
-                # Replace bracketed tokens with plain 'something'
-                norm = tmpl.replace("[something]", "something").replace("[Something]", "something")
-                candidates.append(norm)
-                # Remove brackets entirely
-                no_br = tmpl.replace("[", "").replace("]", "")
-                candidates.append(no_br)
-            found_id: Optional[int] = None
-            chosen_label: Optional[str] = None
-            for c in candidates:
-                if c in self.label2id:
-                    found_id = self.label2id[c]
-                    chosen_label = c
-                    break
-                cl = c.lower()
-                if cl in self.label2id_lower:
-                    found_id = self.label2id_lower[cl]
-                    chosen_label = c  # keep original casing
-                    break
-            if found_id is not None:
-                # Overwrite 'label' field with canonical label string used for mapping
-                it["label"] = chosen_label
-                kept.append(it)
-        dropped = before - len(kept)
-        if dropped > 0:
-            print(f"[SSv2Dataset] Filtered out {dropped} / {before} items not matched to labels.json (split={split}).")
+            vid = it.get("id")
+            tmpl = it.get("template")
+            if vid is None or tmpl is None:
+                miss += 1
+                continue
+            tmpl_norm = _normalize_template(tmpl)
+            cls_id = label2id_norm.get(tmpl_norm, -1)
+            if cls_id == -1:
+                miss += 1
+                # Keep but mark as -1 for visibility
+            kept.append({
+                "id": str(vid),
+                "template": tmpl,
+                "label_id": int(cls_id),
+            })
+        if miss > 0:
+            print(f"[SSv2Dataset] {miss} / {before} items could not be mapped from template -> id (split={split}).")
         if not kept:
-            print("[SSv2Dataset][warn] No items matched any label; check labels.json format or normalization logic.")
+            print("[SSv2Dataset][warn] No items available; check labels.json or normalization.")
         self.items = kept
         self.video_dir = os.path.join(root, "20bn-something-something-v2")
 
@@ -400,18 +422,13 @@ class SSv2Dataset(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         it = self.items[idx]
-        vid_id = it["id"]
+        vid_id = str(it["id"])  # id is string per spec, ensure str
         vpath = os.path.join(self.video_dir, f"{vid_id}.webm")
         if not os.path.isfile(vpath):
             # some mirrors might be mp4
             alt = os.path.join(self.video_dir, f"{vid_id}.mp4")
             vpath = alt if os.path.isfile(alt) else vpath
-        label_text = it.get("label")
-        # Attempt faster direct mapping; fall back to case-insensitive
-        if label_text in self.label2id:
-            label = self.label2id[label_text]
-        else:
-            label = self.label2id_lower.get(label_text.lower(), -1) if isinstance(label_text, str) else -1
+        label = int(it.get("label_id", -1))
         # probe frames
         try:
             container = av.open(vpath)
