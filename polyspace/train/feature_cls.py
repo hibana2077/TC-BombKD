@@ -416,6 +416,9 @@ def main():
     # Backward-compat: allow --feat but enforce single value
     parser.add_argument("--feat", type=str, nargs="*", default=None, help="[Deprecated] use --feature; if provided, only the first value will be used")
     parser.add_argument("--pool", type=str, default="mean", choices=["mean", "max"], help="Temporal pooling")
+    # Optional: remap labels by order for AR when train/test label sets are disjoint but same size
+    parser.add_argument("--remap_by_order", action="store_true",
+                        help="For AR: if train/test class label sets are disjoint but have equal size, remap train labels to test labels by sorted order (k-th smallest -> k-th smallest)")
     # Converter (optional)
     parser.add_argument("--converters", type=str, default=None, help="Path to converters checkpoint (for conv:*)")
     parser.add_argument("--teachers", type=str, nargs="*", default=None, help="Teacher keys present in converter ckpt (e.g., videomae timesformer)")
@@ -458,6 +461,28 @@ def main():
     X_te, y_te, (n_te, _) = build_arrays_memmap(args.test, feat_token, args.pool, converters, device, task=args.task)
 
     if args.task.lower() == "ar":
+        # Optional remapping of labels by order when sets are disjoint but equal-sized
+        def _maybe_remap_by_order(y_tr_in: np.ndarray, y_te_in: np.ndarray) -> Tuple[np.ndarray, Optional[Dict[int, int]]]:
+            tr_classes = np.unique(y_tr_in[y_tr_in >= 0])
+            te_classes = np.unique(y_te_in[y_te_in >= 0])
+            overlap = set(tr_classes.tolist()) & set(te_classes.tolist())
+            if args.remap_by_order and len(overlap) == 0 and len(tr_classes) == len(te_classes) and len(te_classes) > 0:
+                tr_sorted = np.sort(tr_classes)
+                te_sorted = np.sort(te_classes)
+                mapping: Dict[int, int] = {int(tr_sorted[i]): int(te_sorted[i]) for i in range(len(tr_sorted))}
+                y_tr_out = y_tr_in.copy()
+                # Only map labeled entries; keep -1 untouched
+                for src, dst in mapping.items():
+                    y_tr_out[y_tr_out == src] = dst
+                print("[AR] Remapped train labels by order:")
+                # Show a short preview of mapping
+                preview = list(mapping.items())[:10]
+                print("       "+", ".join([f"{a}->{b}" for a, b in preview]) + (" ..." if len(mapping) > 10 else ""))
+                return y_tr_out, mapping
+            return y_tr_in, None
+
+        # Apply remap (no-op if not applicable)
+        y_tr, remap_dict = _maybe_remap_by_order(y_tr, y_te)
         # Sanity diagnostics for AR
         tr_classes, tr_counts = np.unique(y_tr[y_tr >= 0], return_counts=True)
         te_classes, te_counts = np.unique(y_te[y_te >= 0], return_counts=True)
@@ -466,8 +491,8 @@ def main():
         print(f"[AR] Train classes ({len(tr_classes)}): {tr_classes.tolist()} counts={tr_counts.tolist()}")
         print(f"[AR] Test classes ({len(te_classes)}):  {te_classes.tolist()} counts={te_counts.tolist()}")
         print(f"[AR] Overlap classes ({len(overlap)}): {overlap}")
-        if len(overlap) == 0:
-            print("[warn] No class overlap between train and test -> accuracy will be 0.")
+        if len(overlap) == 0 and not args.remap_by_order:
+            print("[warn] No class overlap between train and test -> accuracy will be 0. Consider --remap_by_order if class orders match.")
         if len(tr_classes) < 2:
             print("[warn] Only one class in training data -> classifier cannot learn discrimination.")
         print("[AR] Training and evaluating classifiers:", ", ".join(args.ar_models))
