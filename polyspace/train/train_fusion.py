@@ -105,6 +105,8 @@ def train_fusion(
         epoch_top1_sum = 0.0
         epoch_top5_sum = 0.0
         epoch_count = 0
+        # Accumulator for alpha (gate activation) values
+        epoch_alpha_sum = None
         for batch in pbar:
             video = batch["video"].float().div(255.0).to(device)
             y = batch["label"].to(device)
@@ -164,6 +166,15 @@ def train_fusion(
             epoch_top1_sum += float(acc.get("top1", 0.0)) * n_valid
             epoch_top5_sum += float(acc.get("top5", 0.0)) * n_valid
             epoch_count += n_valid
+            # Accumulate alpha values (gate activations) for epoch summary
+            with torch.no_grad():
+                # alphas shape: (Batch, Tokens, NumTeachers)
+                # Compute mean over batch and tokens to get per-teacher average
+                batch_alpha_mean = alphas.mean(dim=(0, 1))  # Shape: (NumTeachers,)
+                if epoch_alpha_sum is None:
+                    epoch_alpha_sum = batch_alpha_mean * n_valid
+                else:
+                    epoch_alpha_sum += batch_alpha_mean * n_valid
             pbar.set_postfix({"loss": f"{loss.item():.3f}", **acc})
 
         # Report epoch-averaged metrics
@@ -171,13 +182,22 @@ def train_fusion(
             epoch_loss_avg = epoch_loss_sum / epoch_count
             epoch_top1_avg = epoch_top1_sum / epoch_count
             epoch_top5_avg = epoch_top5_sum / epoch_count
+            epoch_alpha_avg = (epoch_alpha_sum / epoch_count).cpu().numpy() if epoch_alpha_sum is not None else None
         else:
             epoch_loss_avg = float("nan")
             epoch_top1_avg = float("nan")
             epoch_top5_avg = float("nan")
+            epoch_alpha_avg = None
+        
+        # Print epoch summary
         print(
             f"Epoch {ep} | avg loss: {epoch_loss_avg:.3f} | avg top1: {epoch_top1_avg:.2f} | avg top5: {epoch_top5_avg:.2f}"
         )
+        
+        # Print alpha values (gate activations) per teacher
+        if epoch_alpha_avg is not None:
+            alpha_str = " | ".join([f"{teacher_keys[i]}: {epoch_alpha_avg[i]:.4f}" for i in range(len(teacher_keys))])
+            print(f"Epoch {ep} | Alpha (gate activations): {alpha_str}")
 
         ckpt_path = os.path.join(save_dir, f"fusion_ep{ep}.pt")
         torch.save({"fusion": fusion.state_dict(), "teacher_keys": teacher_keys, "feat_dim": feat_dim, "num_classes": num_classes}, ckpt_path)
