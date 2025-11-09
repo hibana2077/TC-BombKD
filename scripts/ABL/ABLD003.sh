@@ -4,7 +4,7 @@
 #PBS -l ngpus=1
 #PBS -l ncpus=12
 #PBS -l mem=32GB
-#PBS -l walltime=02:00:00
+#PBS -l walltime=00:40:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -17,8 +17,8 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.feature_cls \
   --task ar \
-  --train ./features/features_ucf101_train.index.json \
-  --test ./features/features_ucf101_test.index.json \
-  --feature vjepa2 \
+  --train ./features/features_diving48_train.index.json \
+  --test ./features/features_diving48_test.index.json \
+  --feature vivit \
   --remap_by_order \
-  --ar_models svm lr >> ABLU001.log 2>&1
+  --ar_models svm lr >> ABLD003.log 2>&1
