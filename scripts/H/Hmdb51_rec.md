@@ -36,6 +36,6 @@
 ## Teacher Models
 
 - H001-H031: VideoMAE pre-trained on Kinetics400
-- H052-H056: {VideoMAE pre-trained on Kinetics400 | TimeSformer pre-trained on ssv2 | ViViT pre-trained on Kinetics400}
+- H052-H061: {VideoMAE pre-trained on Kinetics400 | TimeSformer pre-trained on ssv2 | ViViT pre-trained on Kinetics400}, with A type converters.
 - H062-H071: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2, but with B type converters.
 - H072-H076: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2, but with C type converters.
