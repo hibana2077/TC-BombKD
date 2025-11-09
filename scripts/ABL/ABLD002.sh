@@ -19,6 +19,6 @@ python3 -m polyspace.train.feature_cls \
   --task ar \
   --train ./features/features_diving48_train.index.json \
   --test ./features/features_diving48_test.index.json \
-  --feature vjepa2 \
+  --feature timesformer \
   --remap_by_order \
   --ar_models svm lr >> ABLD002.log 2>&1

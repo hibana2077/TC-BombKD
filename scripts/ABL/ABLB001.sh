@@ -19,6 +19,6 @@ python3 -m polyspace.train.feature_cls \
   --task ar \
   --train ./features/features_breakfast_train.index.json \
   --test ./features/features_breakfast_test.index.json \
-  --feature timesformer \
+  --feature vjepa2 \
   --remap_by_order \
   --ar_models svm lr >> ABLB001.log 2>&1
