@@ -23,6 +23,7 @@ python3 -m polyspace.vis.vis_ct_orig \
   --teachers videomae timesformer vivit \
   --all_teachers \
   --marker_size 160 \
+  --legend_marker_size 60 \
   --converters ./checkpoints/U010/converters_ep10.pt \
   --frames 16 \
   --per_class 50 \

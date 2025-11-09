@@ -202,7 +202,7 @@ def save_scatter(
     plt.close()
 
 
-def save_legend(save_path: str, labels: List[int], dpi: int = 200, marker_size: float = 6.0):
+def save_legend(save_path: str, labels: List[int], dpi: int = 200, marker_size: float = 10.0):
     plt.figure(figsize=(6, 6), dpi=dpi)
     colors = _get_colors(len(labels))
     handles = [plt.Line2D([0], [0], marker='*', color='w', label=str(cid), markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=1.5, markersize=marker_size)
@@ -370,7 +370,13 @@ def main():
         "--marker_size",
         type=float,
         default=6.0,
-        help="Marker size used in scatter and legend (matplotlib 's' / markersize units)",
+        help="Marker size used in scatter plots (matplotlib 's' units)",
+    )
+    parser.add_argument(
+        "--legend_marker_size",
+        type=float,
+        default=10.0,
+        help="Marker size used in legend (matplotlib markersize units)",
     )
     args = parser.parse_args()
 
@@ -452,7 +458,7 @@ def main():
             dpi=args.dpi,
             marker_size=args.marker_size,
         )
-        save_legend(os.path.join(args.save_dir, f"{prefix}_legend.png"), sel_classes, dpi=args.dpi, marker_size=args.marker_size)
+        save_legend(os.path.join(args.save_dir, f"{prefix}_legend.png"), sel_classes, dpi=args.dpi, marker_size=args.legend_marker_size)
         print("[stage] save_plots: done")
 
         # Metrics on PCA-aligned space
