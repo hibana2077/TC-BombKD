@@ -3,8 +3,8 @@
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
-#PBS -l mem=32GB
-#PBS -l walltime=48:00:00
+#PBS -l mem=28GB
+#PBS -l walltime=08:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 

@@ -3,8 +3,8 @@
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
-#PBS -l mem=16GB
-#PBS -l walltime=00:20:00
+#PBS -l mem=28GB
+#PBS -l walltime=08:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -17,7 +17,7 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.train_fusion \
     --dataset ucf101 \
-    --root ./features \
+    --root ./features/features_ucf101_train.index.json \
     --split train \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
