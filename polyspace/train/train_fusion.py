@@ -131,12 +131,33 @@ class FusionFeatureDataset(Dataset):
 
 
 def fusion_feature_collate_fn(batch: List[Dict]) -> Dict:
-    """Collate function for cached feature-based fusion training."""
-    student_feats = torch.stack([b["student_feat"] for b in batch], dim=0)
+    """Collate function for cached feature-based fusion training.
+    
+    Handles variable-length sequences by padding to max length in batch.
+    """
+    # Find max sequence length in batch
+    max_len_student = max(b["student_feat"].shape[0] for b in batch)
+    feat_dim = batch[0]["student_feat"].shape[1]
+    batch_size = len(batch)
+    
+    # Pad student features
+    student_feats = torch.zeros(batch_size, max_len_student, feat_dim)
+    for i, b in enumerate(batch):
+        seq_len = b["student_feat"].shape[0]
+        student_feats[i, :seq_len] = b["student_feat"]
+    
+    # Pad teacher features
     teacher_feats = {}
     teacher_keys = list(batch[0]["teacher_feats"].keys())
     for k in teacher_keys:
-        teacher_feats[k] = torch.stack([b["teacher_feats"][k] for b in batch], dim=0)
+        # Each teacher may have different sequence length
+        max_len_teacher = max(b["teacher_feats"][k].shape[0] for b in batch)
+        teacher_dim = batch[0]["teacher_feats"][k].shape[1]
+        teacher_feat_batch = torch.zeros(batch_size, max_len_teacher, teacher_dim)
+        for i, b in enumerate(batch):
+            seq_len = b["teacher_feats"][k].shape[0]
+            teacher_feat_batch[i, :seq_len] = b["teacher_feats"][k]
+        teacher_feats[k] = teacher_feat_batch
     
     # Handle labels if present
     labels = None
