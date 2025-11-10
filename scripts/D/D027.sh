@@ -3,8 +3,8 @@
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
-#PBS -l mem=24GB
-#PBS -l walltime=22:40:00
+#PBS -l mem=32GB
+#PBS -l walltime=02:40:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -19,7 +19,7 @@ for ep in {1..50}; do
   echo "checkpoint: ep$ep" >> D027.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --dataset diving48 \
-    --root ./features \
+    --root features_diving48_test.index.json \
     --split test \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
