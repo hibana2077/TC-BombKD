@@ -175,6 +175,15 @@ class FeaturePairs(Dataset):
                 out[k] = torch.from_numpy(val)  # type: ignore[arg-type]
             else:
                 out[k] = torch.as_tensor(val)
+        
+        # Include label if present in the record (for fusion training)
+        if "label" in rec:
+            out["label"] = int(rec["label"]) if not isinstance(rec["label"], int) else rec["label"]
+        
+        # Include path if present (for debugging/tracking)
+        if "path" in rec:
+            out["path"] = rec["path"]
+            
         return out
 
 

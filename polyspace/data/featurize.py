@@ -78,6 +78,7 @@ def extract_features(
             paths = batch["path"]
             labels = batch["label"].tolist()
             for i, p in enumerate(paths):
+                # Store both features and labels for downstream fusion training
                 meta.append({
                     "path": p,
                     "label": labels[i],

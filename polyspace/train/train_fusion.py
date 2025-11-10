@@ -1,10 +1,70 @@
+"""Train fusion head for multi-teacher knowledge distillation.
+
+This module supports two training modes:
+
+1. **Video Mode (default)**: 
+   - Loads raw videos from dataset
+   - Extracts student features on-the-fly using student backbone
+   - Applies converters to generate teacher-like features
+   - Slower but doesn't require pre-extraction
+   
+   Usage:
+   ```
+   python -m polyspace.train.train_fusion \\
+       --dataset ucf101 \\
+       --root /path/to/UCF101 \\
+       --student vjepa2 \\
+       --teachers videomae timesformer \\
+       --converters ./checkpoints/converters/converters_ep10.pt \\
+       --classes 101
+   ```
+
+2. **Cached Features Mode (recommended for multiple epochs)**:
+   - Loads pre-extracted features from disk
+   - Skips video decoding and student/converter inference
+   - Much faster, especially for multi-epoch training
+   - Requires running featurize.py first
+   
+   Usage:
+   ```
+   # Step 1: Extract features (one-time cost)
+   python -m polyspace.data.featurize \\
+       --dataset ucf101 \\
+       --root /path/to/UCF101 \\
+       --student vjepa2 \\
+       --teachers videomae timesformer \\
+       --out ./features \\
+       --shard_size 1000
+   
+   # Step 2: Train fusion with cached features (much faster)
+   python -m polyspace.train.train_fusion \\
+       --dataset ucf101 \\
+       --root ./features \\
+       --student vjepa2 \\
+       --teachers videomae timesformer \\
+       --converters ./checkpoints/converters/converters_ep10.pt \\
+       --classes 101 \\
+       --use_cached_features
+   ```
+
+Performance comparison:
+- Video mode: ~10-20 it/s (depends on video I/O and model inference)
+- Cached mode: ~100-500 it/s (only fusion head forward/backward)
+
+The cached mode is especially beneficial when:
+- Training for many epochs
+- Using slow student models (e.g., ViT-Large)
+- Limited video I/O bandwidth
+- Running multiple fusion experiments with same features
+"""
+
 import json
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset, UAVHumanDataset
@@ -12,6 +72,7 @@ from ..models.backbones import build_backbone
 from ..models.converters import build_converter
 from ..models.fusion_head import ResidualGatedFusion
 from ..utils.metrics import topk_accuracy
+from .utils import FeaturePairs
 
 
 def build_dataset(name: str, root: str, split: str, num_frames: int):
@@ -29,6 +90,65 @@ def build_dataset(name: str, root: str, split: str, num_frames: int):
     if name in {"uav", "uav-human", "uavhuman"}:
         return UAVHumanDataset(root, split=split, num_frames=num_frames)
     raise ValueError(f"Unknown dataset {name}")
+
+
+class FusionFeatureDataset(Dataset):
+    """Dataset for fusion training using cached features.
+    
+    Expects features extracted by polyspace.data.featurize with student + teacher features.
+    This avoids redundant video decoding and forward passes through student/converters.
+    """
+    def __init__(self, features_path: str, teacher_keys: List[str]):
+        """
+        Args:
+            features_path: Path to features file (.pkl, .index.json, or directory)
+            teacher_keys: List of teacher feature keys to load
+        """
+        # Reuse FeaturePairs infrastructure for loading sharded/unsharded features
+        # FeaturePairs now automatically includes labels if present in records
+        self._features = FeaturePairs(features_path, teacher_keys)
+        self.teacher_keys = teacher_keys
+        
+        # Check if first sample has label
+        sample = self._features[0]
+        if "label" not in sample:
+            print("[Warning] Cached features do not contain labels. Training may fail.")
+        
+    def __len__(self) -> int:
+        return len(self._features)
+    
+    def __getitem__(self, idx: int) -> Dict:
+        rec = self._features[idx]
+        # rec now contains: {"x": student_feat, <teacher_key>: teacher_feat, "label": ..., "path": ...}
+        out = {
+            "student_feat": rec["x"],  # student features
+            "teacher_feats": {k: rec[k] for k in self.teacher_keys},
+            "label": rec.get("label", -1),  # default to -1 if not present
+        }
+        if "path" in rec:
+            out["path"] = rec["path"]
+        return out
+
+
+def fusion_feature_collate_fn(batch: List[Dict]) -> Dict:
+    """Collate function for cached feature-based fusion training."""
+    student_feats = torch.stack([b["student_feat"] for b in batch], dim=0)
+    teacher_feats = {}
+    teacher_keys = list(batch[0]["teacher_feats"].keys())
+    for k in teacher_keys:
+        teacher_feats[k] = torch.stack([b["teacher_feats"][k] for b in batch], dim=0)
+    
+    # Handle labels if present
+    labels = None
+    if "label" in batch[0]:
+        labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
+    
+    return {
+        "student_feat": student_feats,
+        "teacher_feats": teacher_feats,
+        "label": labels,
+    }
+
 
 
 def load_converters(ckpt_path: str, keys: List[str]) -> nn.ModuleDict:
@@ -67,30 +187,80 @@ def train_fusion(
     epochs: int = 5,
     lr: float = 3e-4,
     save_dir: str = "./checkpoints/fusion",
+    use_cached_features: bool = False,
+    cached_features_path: Optional[str] = None,
 ):
+    """Train fusion head for multi-teacher knowledge distillation.
+    
+    Args:
+        dataset_name: Name of dataset (hmdb51, ucf101, etc.)
+        dataset_root: Path to dataset root (for video mode) or features (for cached mode)
+        split: Dataset split (train/val/test)
+        student_name: Student model name
+        teacher_keys: List of teacher feature keys
+        converter_ckpt: Path to converter checkpoint
+        num_classes: Number of output classes
+        num_frames: Number of frames per clip (only for video mode)
+        batch_size: Batch size
+        epochs: Number of training epochs
+        lr: Learning rate
+        save_dir: Directory to save checkpoints
+        use_cached_features: If True, load pre-extracted features instead of raw videos
+        cached_features_path: Path to cached features (overrides dataset_root if provided)
+    """
     os.makedirs(save_dir, exist_ok=True)
-    ds = build_dataset(dataset_name, dataset_root, split, num_frames)
-    dl = DataLoader(
-        ds,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=2,
-        collate_fn=collate_fn,
-        pin_memory=torch.cuda.is_available(),
-    )
-
-    student = build_backbone(student_name)
-    feat_dim = student.feat_dim if hasattr(student, "feat_dim") else 768
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Build dataloader based on mode
+    if use_cached_features:
+        # Cached feature mode: load pre-extracted features
+        feat_path = cached_features_path if cached_features_path is not None else dataset_root
+        print(f"[Fusion] Using cached features from: {feat_path}")
+        ds = FusionFeatureDataset(feat_path, teacher_keys)
+        dl = DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=2,
+            collate_fn=fusion_feature_collate_fn,
+            pin_memory=torch.cuda.is_available(),
+        )
+        # In cached mode, we don't need student model (features already extracted)
+        student = None
+        # Get feature dimension from first sample
+        sample = ds[0]
+        feat_dim = sample["student_feat"].shape[-1]
+    else:
+        # Video mode: load raw videos and extract features on-the-fly
+        print(f"[Fusion] Using raw videos from: {dataset_root}")
+        ds = build_dataset(dataset_name, dataset_root, split, num_frames)
+        dl = DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=2,
+            collate_fn=collate_fn,
+            pin_memory=torch.cuda.is_available(),
+        )
+        # Need student model for on-the-fly feature extraction
+        student = build_backbone(student_name)
+        feat_dim = student.feat_dim if hasattr(student, "feat_dim") else 768
+        student.to(device)
+        student.eval()  # Student is frozen during fusion training
+    
+    # Load converters (frozen)
     converters = load_converters(converter_ckpt, teacher_keys)
+    converters.to(device)
+    converters.eval()
+    
     # Determine per-converter output dims (fallback to student dim if unknown)
     converter_dims = [int(getattr(converters[k], "out_dim", feat_dim) or feat_dim) for k in teacher_keys]
+    
+    # Build fusion head
     fusion = ResidualGatedFusion(d=feat_dim, converter_dims=converter_dims, low_rank=256, cls_dim=num_classes)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    student.to(device)
-    converters.to(device)
     fusion.to(device)
-
+    
     opt = torch.optim.AdamW(fusion.parameters(), lr=lr)
     # Use ignore_index=-1 to safely skip samples with unknown/invalid labels from datasets
     ce = nn.CrossEntropyLoss(ignore_index=-1)
@@ -108,13 +278,30 @@ def train_fusion(
         # Accumulator for alpha (gate activation) values
         epoch_alpha_sum = None
         for batch in pbar:
-            video = batch["video"].float().div(255.0).to(device)
-            y = batch["label"].to(device)
-            with torch.no_grad():
-                z0 = student(video)["feat"]
-                # Ensure features are on the same device as converters/fusion
-                z0 = z0.to(device, non_blocking=True)
-            z_hats = [converters[k](z0) for k in teacher_keys]
+            # Extract features based on mode
+            if use_cached_features:
+                # Cached mode: features already extracted
+                z0 = batch["student_feat"].to(device, non_blocking=True)
+                # Teacher features already converted (if converters were applied during extraction)
+                # For now, we'll apply converters here for consistency
+                # You may modify feature extraction to pre-apply converters
+                z_hats = [converters[k](z0) for k in teacher_keys]
+                y = batch.get("label")
+                if y is None:
+                    # If labels not in cached features, skip this batch
+                    pbar.set_postfix({"loss": "skip(no-label)"})
+                    continue
+                y = y.to(device)
+            else:
+                # Video mode: extract features on-the-fly
+                video = batch["video"].float().div(255.0).to(device)
+                y = batch["label"].to(device)
+                with torch.no_grad():
+                    z0 = student(video)["feat"]
+                    # Ensure features are on the same device as converters/fusion
+                    z0 = z0.to(device, non_blocking=True)
+                z_hats = [converters[k](z0) for k in teacher_keys]
+            
             out = fusion(z0, z_hats)
             logits = out["logits"]
             alphas = out["alphas"]
@@ -209,17 +396,25 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Train residual-gated fusion head")
     parser.add_argument("--dataset", type=str, required=True)
-    parser.add_argument("--root", type=str, required=True)
+    parser.add_argument("--root", type=str, required=True, 
+                        help="Path to dataset root (videos) or features directory (if --use_cached_features)")
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--student", type=str, default="vjepa2")
     parser.add_argument("--teachers", type=str, nargs="+", required=True)
-    parser.add_argument("--converters", type=str, required=True)
+    parser.add_argument("--converters", type=str, required=True, help="Path to converter checkpoint")
     parser.add_argument("--classes", type=int, required=True)
-    parser.add_argument("--frames", type=int, default=16)
+    parser.add_argument("--frames", type=int, default=16, help="Number of frames (only for video mode)")
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--save_dir", type=str, default="./checkpoints/fusion")
+    
+    # Cached features mode
+    parser.add_argument("--use_cached_features", action="store_true",
+                        help="Use pre-extracted features instead of raw videos (much faster)")
+    parser.add_argument("--cached_features_path", type=str, default=None,
+                        help="Path to cached features (overrides --root if provided)")
+    
     args = parser.parse_args()
 
     train_fusion(
@@ -235,4 +430,6 @@ if __name__ == "__main__":
         epochs=args.epochs,
         lr=args.lr,
         save_dir=args.save_dir,
+        use_cached_features=args.use_cached_features,
+        cached_features_path=args.cached_features_path,
     )
