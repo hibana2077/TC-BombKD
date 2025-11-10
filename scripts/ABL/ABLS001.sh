@@ -7,6 +7,7 @@
 #PBS -l walltime=08:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
+#PBS -l jobfs=1GB
 
 module load cuda/12.6.2
 module load ffmpeg/4.1.3
