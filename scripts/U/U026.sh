@@ -17,14 +17,16 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.train_fusion \
     --dataset ucf101 \
-    --root ./datasets/UCF101 \
+    --root ./features \
     --split train \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
     --converters ./checkpoints/U025/converters_ep10.pt \
-    --classes 51 \
-    --frames 32 \
+    --classes 101 \
+    --frames 16 \
     --batch 8 \
     --epochs 50 \
     --lr 3e-4 \
+    --use_cached_features \
+    --features_fp16 \
     --save_dir ./checkpoints/U026 >> U026.log 2>&1
