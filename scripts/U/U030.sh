@@ -25,5 +25,5 @@ for ep in {1..50}; do
     --teachers videomae timesformer vivit \
     --converters ./checkpoints/U028/converters_ep10.pt \
     --fusion ./checkpoints/U029/fusion_ep$ep.pt \
-    --frames 32 >> U030.log 2>&1
+    --frames 16 >> U030.log 2>&1
 done

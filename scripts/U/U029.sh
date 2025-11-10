@@ -23,7 +23,7 @@ python3 -m polyspace.train.train_fusion \
     --teachers videomae timesformer vivit \
     --converters ./checkpoints/U028/converters_ep10.pt \
     --classes 101 \
-    --frames 32 \
+    --frames 16 \
     --batch 8 \
     --epochs 50 \
     --lr 3e-4 \
