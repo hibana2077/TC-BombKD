@@ -23,7 +23,7 @@ python3 -m polyspace.train.train_fusion \
     --split train \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
-    --converters ./checkpoints/S001/converters_ep10.pt \
+    --converters ./checkpoints/S007/converters_ep10.pt \
     --classes 174 \
     --frames 16 \
     --batch 8 \
@@ -31,4 +31,4 @@ python3 -m polyspace.train.train_fusion \
     --lr 3e-4 \
     --use_cached_features \
     --features_fp16 \
-    --save_dir ./checkpoints/S002 >> S002.log 2>&1
+    --save_dir ./checkpoints/S008 >> S008.log 2>&1
