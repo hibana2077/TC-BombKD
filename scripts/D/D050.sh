@@ -17,7 +17,7 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.train_fusion \
     --dataset diving48 \
-    --root ./features \
+    --root ./features/features_diving48_train.index.json \
     --split train \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
