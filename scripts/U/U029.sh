@@ -17,7 +17,7 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.train_fusion \
     --dataset ucf101 \
-    --root ./features \
+    --root ./features/features_ucf101_train.index.json \
     --split train \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
