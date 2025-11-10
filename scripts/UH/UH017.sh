@@ -27,4 +27,6 @@ python3 -m polyspace.train.train_fusion \
     --batch 4 \
     --epochs 50 \
     --lr 3e-4 \
+    --use_cached_features \
+    --features_fp16 \
     --save_dir ./checkpoints/UH017 >> UH017.log 2>&1
