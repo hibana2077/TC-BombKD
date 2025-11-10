@@ -72,7 +72,7 @@ from ..models.backbones import build_backbone
 from ..models.converters import build_converter
 from ..models.fusion_head import ResidualGatedFusion
 from ..utils.metrics import topk_accuracy
-from .utils import FeaturePairs
+from .utils import FeaturePairs, ShardAwareSampler
 
 
 def build_dataset(name: str, root: str, split: str, num_frames: int):
@@ -259,11 +259,15 @@ def train_fusion(
         feat_path = cached_features_path if cached_features_path is not None else dataset_root
         print(f"[Fusion] Using cached features from: {feat_path}")
         ds = FusionFeatureDataset(feat_path, teacher_keys)
+        # Use num_workers=0 for cached features to avoid redundant shard loading across workers
+        # Each worker would load the same shard independently, causing massive I/O overhead
+        # Use ShardAwareSampler for better I/O locality (reduces shard thrashing)
+        sampler = ShardAwareSampler(ds._features, within_shard_shuffle=True)
         dl = DataLoader(
             ds,
             batch_size=batch_size,
-            shuffle=True,
-            num_workers=2,
+            sampler=sampler,  # Use shard-aware sampling instead of shuffle=True
+            num_workers=0,  # Changed from 2 to 0 - single process avoids redundant shard loads
             collate_fn=fusion_feature_collate_fn,
             pin_memory=torch.cuda.is_available(),
         )
