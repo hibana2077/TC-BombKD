@@ -19,7 +19,7 @@ for ep in {1..50}; do
   echo "checkpoint: ep$ep" >> D030.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --dataset diving48 \
-    --root features_diving48_test.index.json \
+    --root ./features/features_diving48_test.index.json \
     --split test \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
