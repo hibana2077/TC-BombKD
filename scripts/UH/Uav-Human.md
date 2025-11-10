@@ -10,6 +10,10 @@
 | UH016-UH018 | [0.1, 0.0, 1.0, 0.0, 0.0, 0.0] | TBD | TBD |
 | UH019-UH021 | [0.1, 0.0, 0.0, 1.0, 0.0, 0.0] | TBD | TBD |
 | UH022-UH024 | [0.1, 0.0, 0.0, 0.0, 1.0, 0.0] | TBD | TBD |
+| UH025-UH027 | [0.0, 0.9, 0.1, 0.0, 0.0, 0.0] | TBD | TBD |
+| UH028-UH030 | [0.0, 0.9, 0.0, 0.1, 0.0, 0.0] | TBD | TBD |
+| UH031-UH033 | [0.0, 0.9, 0.0, 0.0, 0.1, 0.0] | TBD | TBD |
+| UH034-UH036 | [0.0, 0.9, 0.0, 0.0, 0.0, 0.1] | TBD | TBD |
 
 ## Loss Weights
 
@@ -19,3 +23,4 @@
 
 - UH001-UH012: {VideoMAE, TimeSformer, Vivit} pre-trained on Kinetics400 and ssv2 with Type-A converters.
 - UH013-UH024: {VideoMAE, TimeSformer, Vivit} pre-trained on Kinetics400 and ssv2 with Type-B converters.
+- UH025-UH036: {VideoMAE, TimeSformer, Vivit} pre-trained on Kinetics400 and ssv2 with Type-C converters.
