@@ -17,14 +17,16 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.train_fusion \
     --dataset breakfast \
-    --root ./datasets/breakfast \
+    --root ./features \
     --split train \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
     --converters ./checkpoints/B043/converters_ep10.pt \
-    --classes 51 \
-    --frames 32 \
+    --classes 10 \
+    --frames 16 \
     --batch 8 \
     --epochs 50 \
     --lr 3e-4 \
+    --use_cached_features \
+    --features_fp16 \
     --save_dir ./checkpoints/B044 >> B044.log 2>&1
