@@ -104,10 +104,28 @@ class FusionFeatureDataset(Dataset):
             features_path: Path to features file (.pkl, .index.json, or directory)
             teacher_keys: List of teacher feature keys to load
         """
+        # Print the index json file path being used
+        print(f"[FusionFeatureDataset] Loading features from: {features_path}")
+        
         # Reuse FeaturePairs infrastructure for loading sharded/unsharded features
         # FeaturePairs now automatically includes labels if present in records
         self._features = FeaturePairs(features_path, teacher_keys)
         self.teacher_keys = teacher_keys
+        
+        # Print the actual index json file if in index mode
+        if hasattr(self._features, '_mode') and self._features._mode == 'index':
+            if self._features._base_dir:
+                print(f"[FusionFeatureDataset] Using index mode from directory: {self._features._base_dir}")
+            if os.path.isfile(features_path) and features_path.endswith('.index.json'):
+                print(f"[FusionFeatureDataset] Index JSON file: {features_path}")
+            elif os.path.isdir(features_path):
+                # Find the actual index json file in the directory
+                index_files = [f for f in os.listdir(features_path) if f.endswith('.index.json')]
+                if index_files:
+                    index_file = os.path.join(features_path, sorted(index_files)[0])
+                    print(f"[FusionFeatureDataset] Index JSON file: {index_file}")
+        elif hasattr(self._features, '_mode'):
+            print(f"[FusionFeatureDataset] Using {self._features._mode} mode")
         
         # Check if first sample has label
         sample = self._features[0]
