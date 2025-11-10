@@ -189,6 +189,7 @@ def train_fusion(
     save_dir: str = "./checkpoints/fusion",
     use_cached_features: bool = False,
     cached_features_path: Optional[str] = None,
+    features_fp16: bool = False,
 ):
     """Train fusion head for multi-teacher knowledge distillation.
     
@@ -207,6 +208,7 @@ def train_fusion(
         save_dir: Directory to save checkpoints
         use_cached_features: If True, load pre-extracted features instead of raw videos
         cached_features_path: Path to cached features (overrides dataset_root if provided)
+        features_fp16: If True, cached features are in FP16 and will be converted to FP32
     """
     os.makedirs(save_dir, exist_ok=True)
     
@@ -282,6 +284,9 @@ def train_fusion(
             if use_cached_features:
                 # Cached mode: features already extracted
                 z0 = batch["student_feat"].to(device, non_blocking=True)
+                # Convert FP16 features to FP32 if needed
+                if features_fp16 and z0.dtype == torch.float16:
+                    z0 = z0.float()
                 # Teacher features already converted (if converters were applied during extraction)
                 # For now, we'll apply converters here for consistency
                 # You may modify feature extraction to pre-apply converters
@@ -414,6 +419,8 @@ if __name__ == "__main__":
                         help="Use pre-extracted features instead of raw videos (much faster)")
     parser.add_argument("--cached_features_path", type=str, default=None,
                         help="Path to cached features (overrides --root if provided)")
+    parser.add_argument("--features_fp16", action="store_true",
+                        help="Cached features are in FP16 format (will be converted to FP32 for training)")
     
     args = parser.parse_args()
 
@@ -432,4 +439,5 @@ if __name__ == "__main__":
         save_dir=args.save_dir,
         use_cached_features=args.use_cached_features,
         cached_features_path=args.cached_features_path,
+        features_fp16=args.features_fp16,
     )

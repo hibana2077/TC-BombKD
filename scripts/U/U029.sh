@@ -28,4 +28,5 @@ python3 -m polyspace.train.train_fusion \
     --epochs 50 \
     --lr 3e-4 \
     --use_cached_features \
+    --features_fp16 \
     --save_dir ./checkpoints/U029 >> U029.log 2>&1
