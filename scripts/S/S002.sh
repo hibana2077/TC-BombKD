@@ -19,7 +19,7 @@ cd ../..
 # python3 -m polyspace.train.inspect_features --features ./features/features_hmdb51_train.index.json --limit 100 --sample 3 >> T002.log 2>&1
 python3 -m polyspace.train.train_fusion \
     --dataset ssv2 \
-    --root ./datasets/ssv2 \
+    --root ./features/ssv2/features_ssv2_train.index.json \
     --split train \
     --student vjepa2 \
     --teachers videomae \
@@ -29,4 +29,6 @@ python3 -m polyspace.train.train_fusion \
     --batch 8 \
     --epochs 20 \
     --lr 3e-4 \
+    --use_cached_features \
+    --features_fp16 \
     --save_dir ./checkpoints/S002 >> S002.log 2>&1
