@@ -26,5 +26,6 @@ for ep in {1..50}; do
     --converters ./checkpoints/U028/converters_ep10.pt \
     --fusion ./checkpoints/U029/fusion_ep$ep.pt \
     --features_fp16 \
+    --use_cached_features \
     --frames 16 >> U030.log 2>&1
 done
