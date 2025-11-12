@@ -19,11 +19,13 @@ for ep in {1..50}; do
   echo "checkpoint: ep$ep" >> H074.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --dataset hmdb51 \
-    --root ./datasets/hmdb51 \
+    --root ./features/features_hmdb51_test.index.json \
     --split test \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
     --converters ./checkpoints/H072/converters_ep10.pt \
     --fusion ./checkpoints/H073/fusion_ep$ep.pt \
+    --features_fp16 \
+    --use_cached_features \
     --frames 16 >> H074.log 2>&1
 done
