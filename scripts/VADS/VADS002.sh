@@ -34,7 +34,7 @@ python3 -m polyspace.train.train_vad \
   --cached_features_path ${FEATURES_DIR}/features_shanghaitech_train.index.json \
   --converters_ckpt ${CONVERTER_CKPT} \
   --translator_kind b \
-  --batch 64 \
+  --batch 8 \
   --epochs 20 \
   --lr 3e-4 \
   --proj_dim 128 \
