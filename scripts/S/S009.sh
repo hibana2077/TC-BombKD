@@ -1,9 +1,9 @@
 #!/bin/bash
-#PBS -P rp06
+#PBS -P kf09
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
-#PBS -l mem=24GB
+#PBS -l mem=32GB
 #PBS -l walltime=02:40:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
@@ -16,7 +16,7 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 for ep in {1..50}; do
-  echo "checkpoint: ep$ep" >> S006.log 2>&1
+  echo "checkpoint: ep$ep" >> S009.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --dataset ssv2 \
     --root ./features/ssv2 \
