@@ -138,6 +138,7 @@ def evaluate(
     use_cached_features: bool = False,
     cached_features_path: Optional[str] = None,
     features_fp16: bool = False,
+    advance_cls_head: Optional[bool] = None,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -282,7 +283,14 @@ def evaluate(
         feat_dim_loaded = ckpt["feat_dim"]
         num_classes_loaded = ckpt["num_classes"]
         converter_dims = [int(getattr(converters[k], "out_dim", feat_dim_loaded) or feat_dim_loaded) for k in teacher_keys]
-        fusion = ResidualGatedFusion(d=feat_dim_loaded, converter_dims=converter_dims, cls_dim=num_classes_loaded)
+        # Prefer flag stored in checkpoint; fallback to CLI if provided
+        adv_flag = bool(ckpt.get("advance_cls_head", False)) if advance_cls_head is None else bool(advance_cls_head)
+        fusion = ResidualGatedFusion(
+            d=feat_dim_loaded,
+            converter_dims=converter_dims,
+            cls_dim=num_classes_loaded,
+            advance_cls_head=adv_flag,
+        )
         fusion.load_state_dict(ckpt["fusion"])
         converters.to(device)
         fusion.to(device)
@@ -425,6 +433,8 @@ if __name__ == "__main__":
                         help="Path to cached features (overrides --root if provided)")
     parser.add_argument("--features_fp16", action="store_true",
                         help="Cached features are in FP16 format (will be converted to FP32 for evaluation)")
+    parser.add_argument("--advance-cls-head", action="store_true",
+                        help="Force use of the advanced classification head; overrides checkpoint if set")
     
     args = parser.parse_args()
 
@@ -448,4 +458,5 @@ if __name__ == "__main__":
         use_cached_features=args.use_cached_features,
         cached_features_path=args.cached_features_path,
         features_fp16=args.features_fp16,
+        advance_cls_head=args.advance_cls_head if args.advance_cls_head else None,
     )

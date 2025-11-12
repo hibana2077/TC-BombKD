@@ -5,6 +5,43 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class AdvancedClassificationHead(nn.Module):
+    """Attention-pooling MLP classification head.
+
+    Features:
+    - Learnable query for attention pooling over temporal tokens
+    - LayerNorm + 2-layer MLP with GELU and dropout
+
+    Expected inputs:
+    - x: (B, T, D) or (B, D). If 3D, performs attention pooling over T.
+    """
+
+    def __init__(self, d: int, cls_dim: int, hidden_mult: int = 2, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.d = int(d)
+        self.query = nn.Parameter(torch.randn(self.d))
+        hidden = int(hidden_mult * self.d)
+        self.norm = nn.LayerNorm(self.d)
+        self.fc1 = nn.Linear(self.d, hidden)
+        self.act = nn.GELU()
+        self.drop = nn.Dropout(dropout)
+        self.fc2 = nn.Linear(hidden, cls_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # If sequence provided, attention pool across tokens
+        if x.dim() == 3:
+            # x: [B, T, D], query: [D]
+            scores = torch.einsum("btd,d->bt", x, self.query) / (self.d ** 0.5)
+            attn = torch.softmax(scores, dim=1).unsqueeze(-1)  # [B, T, 1]
+            x = (x * attn).sum(dim=1)  # [B, D]
+        # Now x is [B, D]
+        h = self.norm(x)
+        h = self.fc1(h)
+        h = self.act(h)
+        h = self.drop(h)
+        return self.fc2(h)
+
+
 class ResidualGatedFusion(nn.Module):
     """Residual-gated fusion head with adaptive length handling.
 
@@ -32,10 +69,11 @@ class ResidualGatedFusion(nn.Module):
         cls_dim: Output dimension for classification head; 0 to disable (default: 0)
     """
 
-    def __init__(self, d: int, converter_dims: List[int], low_rank: int = 256, cls_dim: int = 0) -> None:
+    def __init__(self, d: int, converter_dims: List[int], low_rank: int = 256, cls_dim: int = 0, advance_cls_head: bool = False) -> None:
         super().__init__()
         self.student_dim = d
         self.num_teachers = len(converter_dims)
+        self.use_advanced_head = bool(advance_cls_head)
         
         # Build per-teacher projection and gating modules
         self.teacher_projections = nn.ModuleList()
@@ -65,8 +103,17 @@ class ResidualGatedFusion(nn.Module):
                 )
             )
         
-        # Optional classification head
-        self.classification_head = nn.Linear(d, cls_dim) if cls_dim > 0 else None
+        # Optional classification head(s) for compatibility
+        if cls_dim > 0:
+            if self.use_advanced_head:
+                self.advance_cls_head = AdvancedClassificationHead(d, cls_dim)
+                self.classification_head = None
+            else:
+                self.classification_head = nn.Linear(d, cls_dim)
+                self.advance_cls_head = None
+        else:
+            self.classification_head = None
+            self.advance_cls_head = None
 
     @staticmethod
     def _resize_sequence_length(features: torch.Tensor, target_length: int) -> torch.Tensor:
@@ -158,13 +205,16 @@ class ResidualGatedFusion(nn.Module):
         }
         
         # Add classification logits if head is enabled
-        if self.classification_head is not None:
-            if fused_features.dim() == 3:
-                # Average pool over sequence dimension for classification
-                pooled_features = fused_features.mean(dim=1)
-                output["logits"] = self.classification_head(pooled_features)
+        if self.classification_head is not None or self.advance_cls_head is not None:
+            if self.advance_cls_head is not None:
+                output["logits"] = self.advance_cls_head(fused_features)
             else:
-                output["logits"] = self.classification_head(fused_features)
+                if fused_features.dim() == 3:
+                    # Average pool over sequence dimension for classification
+                    pooled_features = fused_features.mean(dim=1)
+                    output["logits"] = self.classification_head(pooled_features)
+                else:
+                    output["logits"] = self.classification_head(fused_features)
         
         return output
 

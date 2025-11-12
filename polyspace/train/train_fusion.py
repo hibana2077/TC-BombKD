@@ -231,6 +231,7 @@ def train_fusion(
     use_cached_features: bool = False,
     cached_features_path: Optional[str] = None,
     features_fp16: bool = False,
+    advance_cls_head: bool = False,
 ):
     """Train fusion head for multi-teacher knowledge distillation.
     
@@ -305,7 +306,13 @@ def train_fusion(
     converter_dims = [int(getattr(converters[k], "out_dim", feat_dim) or feat_dim) for k in teacher_keys]
     
     # Build fusion head
-    fusion = ResidualGatedFusion(d=feat_dim, converter_dims=converter_dims, low_rank=256, cls_dim=num_classes)
+    fusion = ResidualGatedFusion(
+        d=feat_dim,
+        converter_dims=converter_dims,
+        low_rank=256,
+        cls_dim=num_classes,
+        advance_cls_head=advance_cls_head,
+    )
     fusion.to(device)
     
     opt = torch.optim.AdamW(fusion.parameters(), lr=lr)
@@ -437,7 +444,16 @@ def train_fusion(
             print(f"Epoch {ep} | Alpha (gate activations): {alpha_str}")
 
         ckpt_path = os.path.join(save_dir, f"fusion_ep{ep}.pt")
-        torch.save({"fusion": fusion.state_dict(), "teacher_keys": teacher_keys, "feat_dim": feat_dim, "num_classes": num_classes}, ckpt_path)
+        torch.save(
+            {
+                "fusion": fusion.state_dict(),
+                "teacher_keys": teacher_keys,
+                "feat_dim": feat_dim,
+                "num_classes": num_classes,
+                "advance_cls_head": bool(advance_cls_head),
+            },
+            ckpt_path,
+        )
         print(f"Saved {ckpt_path}")
 
 
@@ -466,6 +482,8 @@ if __name__ == "__main__":
                         help="Path to cached features (overrides --root if provided)")
     parser.add_argument("--features_fp16", action="store_true",
                         help="Cached features are in FP16 format (will be converted to FP32 for training)")
+    parser.add_argument("--advance-cls-head", action="store_true",
+                        help="Use advanced classification head (attention pooling + MLP) for fusion head")
     
     args = parser.parse_args()
 
@@ -485,4 +503,5 @@ if __name__ == "__main__":
         use_cached_features=args.use_cached_features,
         cached_features_path=args.cached_features_path,
         features_fp16=args.features_fp16,
+        advance_cls_head=args.advance_cls_head,
     )
