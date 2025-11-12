@@ -30,4 +30,5 @@ python3 -m polyspace.train.eval_vad \
   --ckpt ${CKPT} \
   --batch 128 \
   --features_fp16 \
-  --save_scores ./features/stech/vad_scores_test.json >> VADS003.log 2>&1
+  --save_scores ./features/stech/vad_scores_test.json \
+  --debug >> VADS003.log 2>&1

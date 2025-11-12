@@ -54,6 +54,7 @@ def eval_vad(
     num_frames: int = 16,
     features_fp16: bool = False,
     save_scores: Optional[str] = None,
+    debug: bool = False,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_name = dataset.lower()
@@ -128,6 +129,8 @@ def eval_vad(
 
     translators.to(device); fusion.to(device); proj.to(device)
     translators.eval(); fusion.eval(); proj.eval()
+    if debug:
+        print(f"[VAD Eval][debug] feat_dim={feat_dim_ck} | teacher_dims={teacher_dims} | translators_loaded={loaded_translators}")
 
     scores = []
     labels = []
@@ -147,7 +150,8 @@ def eval_vad(
             p0 = proj(z0)["tokens"]
             pf = proj(zf)["tokens"]
             s = anomaly_score(p0, pf, reduce="mean")  # (B,)
-            scores.extend(s.cpu().tolist())
+            sc = s.detach().float().cpu().numpy().tolist()
+            scores.extend(sc)
             labels.extend(y.cpu().tolist())
             if "path" in batch:
                 paths.extend(batch["path"])
@@ -169,6 +173,7 @@ def eval_vad(
         mask_dir = next((p for p in mask_candidates if os.path.isdir(p)), None)
         if mask_dir is not None:
             new_labels = []
+            masks_found = 0
             for p in paths:
                 try:
                     # clip_id is the basename of the frames directory or filename base
@@ -179,21 +184,47 @@ def eval_vad(
                     if os.path.isfile(mpath):
                         m = np.load(mpath)
                         yv = 1 if np.sum(m) > 0 else 0
+                        masks_found += 1
                     else:
                         yv = 0
                 except Exception:
                     yv = 0
                 new_labels.append(yv)
             labels = new_labels
+            if debug:
+                print(f"[VAD Eval][debug] Using mask_dir={mask_dir}; found_masks={masks_found}/{len(paths)}")
+        elif debug:
+            print("[VAD Eval][debug] No mask_dir found among:", mask_candidates)
 
     # Compute AUC if both classes present
     try:
-        pos = np.array(scores)[np.array(labels) == 1]
-        neg = np.array(scores)[np.array(labels) == 0]
+        scores_np = np.asarray(scores, dtype=np.float64)
+        labels_np = np.asarray(labels, dtype=np.int64)
+        pos = scores_np[labels_np == 1]
+        neg = scores_np[labels_np == 0]
         from sklearn.metrics import roc_auc_score
-        auc = roc_auc_score(labels, scores) if len(pos) and len(neg) else float("nan")
+        auc = roc_auc_score(labels_np, scores_np) if len(pos) and len(neg) else float("nan")
     except Exception:
         auc = float("nan")
+
+    # Debug diagnostics when AUC is NaN or debug requested
+    if debug or (isinstance(auc, float) and (auc != auc)):  # NaN check
+        # Label distribution
+        uniq, cnts = np.unique(np.asarray(labels), return_counts=True)
+        dist = {int(uniq[i]): int(cnts[i]) for i in range(len(uniq))}
+        smin = float(np.nanmin(scores_np)) if len(scores_np) else float('nan')
+        smax = float(np.nanmax(scores_np)) if len(scores_np) else float('nan')
+        smea = float(np.nanmean(scores_np)) if len(scores_np) else float('nan')
+        n_nan = int(np.isnan(scores_np).sum()) if len(scores_np) else 0
+        print(f"[VAD Eval][debug] label_dist={dist} | scores: min={smin:.6f} max={smax:.6f} mean={smea:.6f} nan={n_nan}")
+        # Show a few samples
+        show_n = min(10, len(paths))
+        for i in range(show_n):
+            p = paths[i]
+            clip_id = os.path.basename(str(p).rstrip("/"))
+            if os.path.splitext(clip_id)[1]:
+                clip_id = os.path.splitext(clip_id)[0]
+            print(f"[VAD Eval][debug] sample[{i}] path={p} | clip_id={clip_id} | label={labels[i]} | score={scores[i]:.6f}")
     print(f"Videos: {len(scores)} | AUC: {auc:.4f}")
 
     if save_scores:
@@ -216,6 +247,7 @@ if __name__ == "__main__":
     ap.add_argument("--frames", type=int, default=16)
     ap.add_argument("--features_fp16", action="store_true")
     ap.add_argument("--save_scores", type=str, default=None)
+    ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
 
     eval_vad(
@@ -229,4 +261,5 @@ if __name__ == "__main__":
         num_frames=args.frames,
         features_fp16=args.features_fp16,
         save_scores=args.save_scores,
+        debug=args.debug,
     )
