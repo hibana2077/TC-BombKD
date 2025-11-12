@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset, UAVHumanDataset
+from ..data.datasets import collate_fn, HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset, UAVHumanDataset, ShanghaiTechVADDataset
 from ..models.backbones import build_backbone
 from ..models.converters import build_converter
 from ..models.fusion_head import ResidualGatedFusion
@@ -27,6 +27,8 @@ def build_dataset(name: str, root: str, split: str, num_frames: int):
         return UCF101Dataset(root, split=split, num_frames=num_frames)
     if name in {"uav", "uav-human", "uavhuman"}:
         return UAVHumanDataset(root, split=split, num_frames=num_frames)
+    if name in {"shanghaitech", "stech", "shtech"}:
+        return ShanghaiTechVADDataset(root, split=split, num_frames=num_frames)
     raise ValueError(f"Unknown dataset {name}")
 
 

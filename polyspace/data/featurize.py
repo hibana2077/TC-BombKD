@@ -11,7 +11,7 @@ import numpy as np
 
 try:
     # When executed as a package module: python -m polyspace.data.featurize
-    from .datasets import HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset, UAVHumanDataset, collate_fn
+    from .datasets import HMDB51Dataset, Diving48Dataset, SSv2Dataset, BreakfastDataset, UCF101Dataset, UAVHumanDataset, ShanghaiTechVADDataset, collate_fn
     from ..models.backbones import build_backbone
 except Exception:
     # When executed directly as a script: python polyspace/data/featurize.py
@@ -33,6 +33,8 @@ def build_dataset(name: str, root: str, split: str, num_frames: int):
         return UCF101Dataset(root, split=split, num_frames=num_frames)
     if name in {"uav", "uav-human", "uavhuman"}:
         return UAVHumanDataset(root, split=split, num_frames=num_frames)
+    if name in {"shanghaitech", "stech", "shtech"}:
+        return ShanghaiTechVADDataset(root, split=split, num_frames=num_frames)
     raise ValueError(f"Unknown dataset {name}")
 
 
@@ -235,7 +237,10 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Extract clip-level features")
-    parser.add_argument("--dataset", type=str, required=True, choices=["hmdb51", "diving48", "ssv2", "breakfast", "ucf101", "uav"]) 
+    parser.add_argument("--dataset", type=str, required=True, choices=[
+        "hmdb51", "diving48", "ssv2", "breakfast", "ucf101", "uav",
+        "shanghaitech", "stech", "shtech"
+    ]) 
     parser.add_argument("--root", type=str, required=True)
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--out", type=str, default="./features")

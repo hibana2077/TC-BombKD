@@ -786,3 +786,132 @@ class BreakfastDataset(Dataset):
         indices = _sample_frame_indices(self.num_frames, total)
         video = _read_video_pyav(s.video_path, indices)
         return {"video": video, "label": s.label if s.label is not None else -1, "path": s.video_path}
+
+
+class ShanghaiTechVADDataset(Dataset):
+    """ShanghaiTech Anomaly Detection dataset loader.
+
+    Structure (see docs/VAD.md):
+      Stech/
+        ShanghaiTech/
+          training/
+            videos/*.avi             # all normal (label=0)
+          testing/
+            frames/<clip_id>/*.jpg   # test frames
+          test_frame_mask/<clip_id>.npy   # frame-level 0/1 labels
+          test_pixel_mask/<clip_id>.npy   # pixel-level mask (unused here)
+
+    Notes:
+      - Train split: treats every video in training/videos as normal (label=0)
+      - Test/Validation split: uses frames folders; if clip id indicates anomaly
+        via frame mask sum>0, we set video-level label=1 (weak supervision). The
+        per-frame mask is not returned here (feature extraction path doesn't need it),
+        but the path is kept in 'path' so downstream eval can map to mask file.
+
+    Args:
+      root: directory containing the "ShanghaiTech" folder shown above OR the
+            "ShanghaiTech" folder itself.
+      split: "train" to read training/videos; anything else -> testing/frames
+      num_frames: number of frames to sample per clip uniformly.
+    """
+
+    def __init__(self, root: str, split: str = "train", num_frames: int = 16) -> None:
+        super().__init__()
+        self.split = (split or "train").lower()
+        self.num_frames = int(num_frames)
+
+        # Allow passing .../Stech or .../Stech/ShanghaiTech as root
+        if os.path.basename(root.rstrip("/")) != "ShanghaiTech":
+            base = os.path.join(root, "ShanghaiTech")
+            self.root = base if os.path.isdir(base) else root
+        else:
+            self.root = root
+
+        train_vdir = os.path.join(self.root, "training", "videos")
+        test_frames_dir = os.path.join(self.root, "testing", "frames")
+        mask_dir = os.path.join(self.root, "test_frame_mask")
+
+        samples: List[VideoSample] = []
+        if self.split.startswith("train"):
+            if not os.path.isdir(train_vdir):
+                raise FileNotFoundError(f"training/videos not found under {self.root}")
+            for fn in sorted(os.listdir(train_vdir)):
+                if not fn.lower().endswith((".avi", ".mp4", ".webm")):
+                    continue
+                vpath = os.path.join(train_vdir, fn)
+                # All training videos are normal
+                samples.append(VideoSample(vpath, 0))
+        else:
+            if not os.path.isdir(test_frames_dir):
+                raise FileNotFoundError(f"testing/frames not found under {self.root}")
+            # Use frames folders; label by existence of positive frames in mask
+            for clip_id in sorted(os.listdir(test_frames_dir)):
+                cdir = os.path.join(test_frames_dir, clip_id)
+                if not os.path.isdir(cdir):
+                    continue
+                # Determine video-level label from frame mask
+                label = 0
+                mpath = os.path.join(mask_dir, f"{clip_id}.npy")
+                try:
+                    if os.path.isfile(mpath):
+                        m = np.load(mpath)
+                        label = 1 if np.sum(m) > 0 else 0
+                except Exception:
+                    # Default to normal if mask missing or unreadable
+                    label = 0
+                # We will treat the directory as a "video path" token understood by __getitem__
+                samples.append(VideoSample(cdir, label))
+
+        if not samples:
+            raise RuntimeError(f"No ShanghaiTech samples found for split='{self.split}' under {self.root}")
+        self.samples = samples
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def _read_frames_dir(self, dir_path: str, indices: List[int]) -> np.ndarray:
+        # Read specific indices from a directory of JPG frames named with zero-padded numbers
+        # We'll list and sort filenames, then pick indices
+        fns = [f for f in os.listdir(dir_path) if f.lower().endswith((".jpg", ".png"))]
+        if not fns:
+            raise RuntimeError(f"No frames found in {dir_path}")
+        fns.sort()
+        frames = []
+        for i in indices:
+            j = min(max(i, 0), len(fns) - 1)
+            fp = os.path.join(dir_path, fns[j])
+            img = cv2.imread(fp)
+            if img is None:
+                # fallback: skip or duplicate previous
+                if frames:
+                    frames.append(frames[-1])
+                else:
+                    # create a black frame with common size
+                    img = np.zeros((256, 256, 3), dtype=np.uint8)
+                    frames.append(img)
+                continue
+            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            frames.append(rgb)
+        return np.stack(frames)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        s = self.samples[idx]
+        p = s.video_path
+        if self.split.startswith("train"):
+            # Treat as a real video file
+            try:
+                container = av.open(p)
+                total = container.streams.video[0].frames or 0
+            except Exception:
+                total = 0
+            indices = _sample_frame_indices(self.num_frames, total)
+            video = _read_video_pyav(p, indices)
+        else:
+            # p is a frames directory
+            try:
+                total = len([f for f in os.listdir(p) if f.lower().endswith((".jpg", ".png"))])
+            except Exception:
+                total = 0
+            indices = _sample_frame_indices(self.num_frames, total)
+            video = self._read_frames_dir(p, indices)
+        return {"video": video, "label": s.label if s.label is not None else -1, "path": p}
