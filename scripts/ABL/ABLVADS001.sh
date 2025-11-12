@@ -20,4 +20,4 @@ python3 -m polyspace.train.feature_cls \
   --train ./features/stech/features_shanghaitech_train.index.json \
   --test ./features/stech/features_shanghaitech_test.index.json \
   --feature vjepa2 \
-  --vad_models dbscan iforest >> ABLVADS001.log 2>&1
+  --vad_models dbscan iforest --normal_class 0 >> ABLVADS001.log 2>&1
