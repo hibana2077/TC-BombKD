@@ -31,4 +31,5 @@ python3 -m polyspace.train.eval_vad \
   --batch 128 \
   --features_fp16 \
   --save_scores ./features/stech/vad_scores_test.json \
+  --frame_level \
   --debug >> VADS003.log 2>&1

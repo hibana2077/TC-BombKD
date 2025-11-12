@@ -55,6 +55,7 @@ def eval_vad(
     features_fp16: bool = False,
     save_scores: Optional[str] = None,
     debug: bool = False,
+    frame_level: bool = False,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_name = dataset.lower()
@@ -135,6 +136,7 @@ def eval_vad(
     scores = []
     labels = []
     paths = []
+    first_debug_batch = True
     with torch.no_grad():
         for batch in tqdm(dl, desc="VAD Eval"):
             if use_cached_features:
@@ -146,10 +148,29 @@ def eval_vad(
                 z0 = student_model(video)["feat"]
             y = batch["label"].to(device)
             z_hats = [translators[i](z0) for i in range(len(translators))]
-            zf = fusion(z0, z_hats)["z"]
+            fout = fusion(z0, z_hats)
+            zf = fout["z"]
             p0 = proj(z0)["tokens"]
             pf = proj(zf)["tokens"]
             s = anomaly_score(p0, pf, reduce="mean")  # (B,)
+            if debug and first_debug_batch:
+                try:
+                    dz = (zf - z0).abs().mean().item()
+                    z0n = z0.norm(dim=-1).mean().item()
+                    zfn = zf.norm(dim=-1).mean().item()
+                    tnorms = [t.norm(dim=-1).mean().item() for t in z_hats]
+                    if isinstance(fout, dict) and "alphas" in fout and isinstance(fout["alphas"], torch.Tensor):
+                        a = fout["alphas"]
+                        amean = a.mean().item()
+                        amin = a.min().item()
+                        amax = a.max().item()
+                        print(f"[VAD Eval][debug] delta_z_mean={dz:.6f} | ||z0||_mean={z0n:.6f} | ||zf||_mean={zfn:.6f} | alphas(mean/min/max)={amean:.4f}/{amin:.4f}/{amax:.4f}")
+                    else:
+                        print(f"[VAD Eval][debug] delta_z_mean={dz:.6f} | ||z0||_mean={z0n:.6f} | ||zf||_mean={zfn:.6f}")
+                    print(f"[VAD Eval][debug] translator token-norm means per teacher: {', '.join(f'{v:.6f}' for v in tnorms)}")
+                except Exception:
+                    pass
+                first_debug_batch = False
             sc = s.detach().float().cpu().numpy().tolist()
             scores.extend(sc)
             labels.extend(y.cpu().tolist())
@@ -159,6 +180,7 @@ def eval_vad(
                 paths.extend(["unknown"] * s.size(0))
 
     # If evaluating ShanghaiTech in cached mode and labels are missing (all zeros), try inferring from frame masks
+    labels_orig = list(labels)
     if use_cached_features and data_name in {"shanghaitech", "stech", "shtech"} and split.lower().startswith("test"):
         # Resolve root to ShanghaiTech folder
         base_root = root
@@ -195,6 +217,13 @@ def eval_vad(
                 print(f"[VAD Eval][debug] Using mask_dir={mask_dir}; found_masks={masks_found}/{len(paths)}")
         elif debug:
             print("[VAD Eval][debug] No mask_dir found among:", mask_candidates)
+        if debug:
+            # Show original vs inferred label distribution
+            uo, co = np.unique(np.asarray(labels_orig), return_counts=True)
+            ud, cd = np.unique(np.asarray(labels), return_counts=True)
+            dist_o = {int(uo[i]): int(co[i]) for i in range(len(uo))}
+            dist_d = {int(ud[i]): int(cd[i]) for i in range(len(ud))}
+            print(f"[VAD Eval][debug] orig_label_dist={dist_o} -> inferred_label_dist={dist_d}")
 
     # Compute AUC if both classes present
     try:
@@ -227,6 +256,73 @@ def eval_vad(
             print(f"[VAD Eval][debug] sample[{i}] path={p} | clip_id={clip_id} | label={labels[i]} | score={scores[i]:.6f}")
     print(f"Videos: {len(scores)} | AUC: {auc:.4f}")
 
+    # Optional: frame-level AUC for ShanghaiTech using masks, by aligning token scores with mask via uniform sampling
+    if frame_level and use_cached_features and data_name in {"shanghaitech", "stech", "shtech"} and split.lower().startswith("test"):
+        # Determine mask dir again
+        base_root = root
+        if os.path.basename(base_root.rstrip("/")) != "ShanghaiTech":
+            cand = os.path.join(base_root, "ShanghaiTech")
+            base_root = cand if os.path.isdir(cand) else base_root
+        mask_candidates = [
+            os.path.join(base_root, "test_frame_mask"),
+            os.path.join(base_root, "testing", "test_frame_mask"),
+        ]
+        mask_dir = next((p for p in mask_candidates if os.path.isdir(p)), None)
+        if mask_dir is None:
+            if debug:
+                print("[VAD Eval][debug] frame-level requested but no mask_dir found.")
+        else:
+            # Re-run over the dataset to collect per-token scores
+            tok_scores_all: List[np.ndarray] = []
+            tok_labels_all: List[np.ndarray] = []
+            with torch.no_grad():
+                for batch in tqdm(dl, desc="VAD Frame Eval"):
+                    if use_cached_features:
+                        z0 = batch["student_feat"].to(device)
+                        if features_fp16 and z0.dtype == torch.float16:
+                            z0 = z0.float()
+                    else:
+                        video = batch["video"].float().div(255.0).to(device)
+                        z0 = student_model(video)["feat"]
+                    z_hats = [translators[i](z0) for i in range(len(translators))]
+                    zf = fusion(z0, z_hats)["z"]
+                    p0t = proj(z0)["tokens"]
+                    pft = proj(zf)["tokens"]
+                    # per-token scores: (B,T)
+                    tok_s = (p0t - pft).pow(2).sum(dim=-1).detach().float().cpu().numpy()
+                    # Build labels by sampling mask to T positions
+                    for i, p in enumerate(batch.get("path", ["unknown"]) if "path" in batch else ["unknown"] * tok_s.shape[0]):
+                        clip_id = os.path.basename(str(p).rstrip("/"))
+                        if os.path.splitext(clip_id)[1]:
+                            clip_id = os.path.splitext(clip_id)[0]
+                        mpath = os.path.join(mask_dir, f"{clip_id}.npy")
+                        if os.path.isfile(mpath):
+                            m = np.load(mpath)
+                            F = int(len(m))
+                            T = int(tok_s.shape[1])
+                            if F <= 0:
+                                ytok = np.zeros((T,), dtype=np.int64)
+                            else:
+                                # Uniform sample indices across [0, F-1]
+                                idx = np.linspace(0, max(F - 1, 0), num=T).astype(np.int64)
+                                idx = np.clip(idx, 0, F - 1)
+                                ytok = (m[idx] > 0).astype(np.int64)
+                        else:
+                            ytok = np.zeros((tok_s.shape[1],), dtype=np.int64)
+                        tok_scores_all.append(tok_s[i])
+                        tok_labels_all.append(ytok)
+            if tok_scores_all:
+                s_all = np.concatenate(tok_scores_all)
+                y_all = np.concatenate(tok_labels_all)
+                try:
+                    from sklearn.metrics import roc_auc_score
+                    auc_f = roc_auc_score(y_all, s_all) if (y_all.max() != y_all.min()) else float("nan")
+                except Exception:
+                    auc_f = float("nan")
+                print(f"Frames: {len(s_all)} | Frame-AUC: {auc_f:.4f}")
+            else:
+                print("Frames: 0 | Frame-AUC: nan")
+
     if save_scores:
         out = [{"path": p, "score": scores[i], "label": labels[i]} for i, p in enumerate(paths)]
         with open(save_scores, "w", encoding="utf-8") as f:
@@ -248,6 +344,7 @@ if __name__ == "__main__":
     ap.add_argument("--features_fp16", action="store_true")
     ap.add_argument("--save_scores", type=str, default=None)
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--frame_level", action="store_true", help="Compute frame-level AUC using frame masks by aligning tokens uniformly")
     args = ap.parse_args()
 
     eval_vad(
@@ -262,4 +359,5 @@ if __name__ == "__main__":
         features_fp16=args.features_fp16,
         save_scores=args.save_scores,
         debug=args.debug,
+        frame_level=args.frame_level,
     )
