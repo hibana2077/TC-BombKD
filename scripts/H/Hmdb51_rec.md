@@ -29,6 +29,16 @@
 | H067-H071 | B | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD | Multi-teacher (B converter) |
 | H072-H074 | C | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD | Multi-teacher (C converter) |
 | H075-H077 | C | [0.0, 0.0, 1.0, 0.0, 0.0, 0.0] | TBD | TBD | Multi-teacher (C converter) |
+| H078-H080 | A | [0.0, 0.9, 0.1, 0.0, 0.0, 0.0] | TBD | TBD | Multi-teacher (A converter) |
+| H081-H083 | A | [0.0, 0.85, 0.0, 0.1, 0.0, 0.05] | TBD | TBD | Multi-teacher (A converter) |
+| H084-H086 | B | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD | Multi-teacher (B converter) |
+| H087-H089 | B | [0.0, 0.8, 0.1, 0.1, 0.0, 0.0] | TBD | TBD | Multi-teacher (B converter) |
+| H090-H092 | C | [0.0, 0.9, 0.0, 0.1, 0.0, 0.0] | TBD | TBD | Multi-teacher (C converter) |
+| H093-H095 | C | [0.0, 0.8, 0.2, 0.0, 0.0, 0.0] | TBD | TBD | Multi-teacher (C converter) |
+| H096-H098 | A | [0.05, 0.9, 0.0, 0.0, 0.0, 0.05] | TBD | TBD | Multi-teacher (A converter) |
+| H099-H101 | A | [0.0, 0.7, 0.2, 0.1, 0.0, 0.0] | TBD | TBD | Multi-teacher (A converter) |
+| H102-H104 | B | [0.0, 0.75, 0.0, 0.25, 0.0, 0.0] | TBD | TBD | Multi-teacher (B converter) |
+| H105-H107 | C | [0.0, 0.7, 0.0, 0.2, 0.1, 0.0] | TBD | TBD | Multi-teacher (C converter) |
 
 ## Loss Weights Configuration
 
