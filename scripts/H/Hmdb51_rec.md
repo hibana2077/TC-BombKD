@@ -1,9 +1,5 @@
 # Test on HMDB51
 
-## Loss Weights Configuration
-
-Loss weights are configured as: [l2, cosine, nce, vicreg, barlow_twins, l1]
-
 ## Individual Results
 
 | Code | Top-1 Accuracy (%) | Top-5 Accuracy (%) | Notes |
@@ -33,6 +29,10 @@ Loss weights are configured as: [l2, cosine, nce, vicreg, barlow_twins, l1]
 | H067-H071 | B | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD | Multi-teacher (B converter) |
 | H072-H074 | C | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | TBD | TBD | Multi-teacher (C converter) |
 | H075-H077 | C | [0.0, 0.0, 1.0, 0.0, 0.0, 0.0] | TBD | TBD | Multi-teacher (C converter) |
+
+## Loss Weights Configuration
+
+Loss weights are configured as: [l2, cosine, nce, vicreg, barlow_twins, l1]
 
 ## Teacher Model Configurations
 
