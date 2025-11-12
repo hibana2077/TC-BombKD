@@ -6,20 +6,17 @@ import torch.nn.functional as F
 
 
 class AdvancedClassificationHead(nn.Module):
-    """Attention-pooling MLP classification head.
-
-    Features:
-    - Learnable query for attention pooling over temporal tokens
-    - LayerNorm + 2-layer MLP with GELU and dropout
-
-    Expected inputs:
-    - x: (B, T, D) or (B, D). If 3D, performs attention pooling over T.
-    """
-
-    def __init__(self, d: int, cls_dim: int, hidden_mult: int = 2, dropout: float = 0.1) -> None:
+    def __init__(self, d, cls_dim, hidden_mult=1, dropout=0.3, attn_drop=0.1, mix_init=0.5):
         super().__init__()
         self.d = int(d)
-        self.query = nn.Parameter(torch.randn(self.d))
+        # 起步為「均勻注意力」
+        self.query = nn.Parameter(torch.zeros(self.d))
+        # 可學溫度：scores *= exp(logit_scale)
+        self.logit_scale = nn.Parameter(torch.tensor(0.0))
+        self.attn_drop = nn.Dropout(attn_drop)
+        # attn 與 mean 的混合門（經 sigmoid 後落在 0~1）
+        self.mix_gate = nn.Parameter(torch.tensor(mix_init))
+
         hidden = int(hidden_mult * self.d)
         self.norm = nn.LayerNorm(self.d)
         self.fc1 = nn.Linear(self.d, hidden)
@@ -27,14 +24,26 @@ class AdvancedClassificationHead(nn.Module):
         self.drop = nn.Dropout(dropout)
         self.fc2 = nn.Linear(hidden, cls_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # If sequence provided, attention pool across tokens
+    def forward(self, x, mask: Optional[torch.Tensor] = None):
+        # x: [B,T,D] or [B,D]; mask: [B,T]，True 表示有效位
         if x.dim() == 3:
-            # x: [B, T, D], query: [D]
-            scores = torch.einsum("btd,d->bt", x, self.query) / (self.d ** 0.5)
-            attn = torch.softmax(scores, dim=1).unsqueeze(-1)  # [B, T, 1]
-            x = (x * attn).sum(dim=1)  # [B, D]
-        # Now x is [B, D]
+            B, T, D = x.shape
+            q = F.normalize(self.query, dim=0)              # 正規化 query
+            scores = torch.einsum("btd,d->bt", x, q) * self.logit_scale.exp()
+            if mask is not None:
+                scores = scores.masked_fill(~mask, float("-inf"))
+            attn = torch.softmax(scores, dim=1)             # [B,T]
+            attn = self.attn_drop(attn).unsqueeze(-1)       # [B,T,1]
+            pooled_attn = (x * attn).sum(dim=1)             # [B,D]
+            if mask is None:
+                pooled_mean = x.mean(dim=1)
+            else:
+                denom = mask.sum(dim=1, keepdim=True).clamp_min(1).float()
+                pooled_mean = (x * mask.unsqueeze(-1)).sum(dim=1) / denom
+            # 可學混合（sigmoid 保證 0~1）
+            alpha = torch.sigmoid(self.mix_gate)
+            x = (1 - alpha) * pooled_mean + alpha * pooled_attn
+        # MLP（保持簡單）
         h = self.norm(x)
         h = self.fc1(h)
         h = self.act(h)
@@ -191,8 +200,11 @@ class ResidualGatedFusion(nn.Module):
             # Step 5: Upsample back to student sequence length
             gated_teacher_upsampled = self._resize_sequence_length(gated_teacher, student_seq_len)
             
-            # Step 6: Add to fused output via residual connection
-            fused_features = fused_features + gated_teacher_upsampled
+            # Step 6: Simply scale gated features before adding
+            scale = (self.num_teachers ** 0.5)
+
+            # Step 7: Add to fused output via residual connection with scaling
+            fused_features = fused_features + gated_teacher_upsampled / scale
             
             # Store upsampled gate weights for regularization/visualization
             gate_weights_upsampled = self._resize_sequence_length(gate_weights, student_seq_len)
