@@ -35,10 +35,11 @@ python3 -m polyspace.train.train_vad \
   --converters_ckpt ${CONVERTER_CKPT} \
   --translator_kind b \
   --batch 64 \
-  --epochs 10 \
+  --epochs 20 \
   --lr 3e-4 \
   --proj_dim 128 \
   --margin 1.0 \
   --save_dir ${VAD_DIR} \
   --features_fp16 \
-  --freeze_translators >> VADS002.log 2>&1
+#   --freeze_translators
+  >> VADS002.log 2>&1
