@@ -111,8 +111,7 @@ def _record_to_vector(rec: Dict[str, Any], mode: str, key: Optional[str], poolin
                 z = z[None, :]
             if device is None:
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            # Ensure modules and inputs are on the same device and dtype
-            converters.to(device).eval()
+            # Ensure inputs match converter dtype; converters are expected to already be on device
             # Match input dtype to converter weights (avoid Half/Float mismatch)
             try:
                 weight_dtype = next(converters[key].parameters()).dtype
@@ -205,6 +204,12 @@ def build_arrays_memmap(path: str, feature: str, pooling: str,
     For AR task, only labeled samples (y>=0) are included to reduce size.
     """
     mode, key = _parse_single_feat(feature)
+
+    # If using converters, move them to device and set eval once (avoid per-record transfers)
+    if mode == "conv" and converters is not None:
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        converters.to(device).eval()
 
     # Determine N quickly when possible and the first vector dimension D
     total = count_records(path)
@@ -359,6 +364,12 @@ def fit_eval_vad(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.
     results: Dict[str, Dict[str, Any]] = {}
     y_tr_bin = _binarize_labels(y_tr, normal_class)
     y_te_bin = _binarize_labels(y_te, normal_class)
+    # Prefer training only on normals if we can identify them
+    if y_tr_bin is not None:
+        tr_norm_mask = (y_tr_bin == 0)
+        X_tr_use = X_tr[tr_norm_mask]
+    else:
+        X_tr_use = X_tr
 
     for m in models:
         mlow = m.lower()
@@ -366,7 +377,7 @@ def fit_eval_vad(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.
             pipe = make_pipeline(StandardScaler(with_mean=True), IsolationForest(contamination=iforest_contam, random_state=0))
             # IsolationForest ignores y
             t0 = time.time()
-            pipe.fit(X_tr)
+            pipe.fit(X_tr_use)
             train_time = time.time() - t0
             # anomaly score: the higher, the more abnormal -> use negative of score_samples
             # sklearn: score_samples: higher means more normal; decision_function: higher means more normal
@@ -394,7 +405,7 @@ def fit_eval_vad(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.
         elif mlow in {"dbscan"}:
             # Fit DBSCAN on train normals (labels ignored). Predict anomaly on test by distance to core samples
             scaler = StandardScaler(with_mean=True)
-            X_tr_s = scaler.fit_transform(X_tr)
+            X_tr_s = scaler.fit_transform(X_tr_use)
             t0 = time.time()
             db = DBSCAN(eps=dbscan_eps, min_samples=dbscan_min_samples)
             db.fit(X_tr_s)
@@ -421,7 +432,7 @@ def fit_eval_vad(X_tr: np.ndarray, y_tr: np.ndarray, X_te: np.ndarray, y_te: np.
                 "test_time": test_time,
             }
             if y_te_bin is not None:
-                # Use neg distance as score (higher => more anomalous)
+                # Use distance as score (higher => more anomalous)
                 scores = dists
                 res.update({
                     "auroc": float(roc_auc_score(y_te_bin, scores)),
