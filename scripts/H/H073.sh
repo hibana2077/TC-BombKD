@@ -15,16 +15,17 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
-python3 -m polyspace.train.train_fusion \
+for ep in {1..50}; do
+  echo "checkpoint: ep$ep" >> H073.log 2>&1
+  python3 -m polyspace.train.eval_downstream \
     --dataset hmdb51 \
-    --root ./datasets/hmdb51 \
-    --split train \
+    --root ./features/features_hmdb51_test.index.json \
+    --split test \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
     --converters ./checkpoints/H072/converters_ep10.pt \
-    --classes 51 \
-    --frames 16 \
-    --batch 8 \
-    --epochs 50 \
-    --lr 3e-4 \
-    --save_dir ./checkpoints/H073 >> H073.log 2>&1
+    --fusion ./checkpoints/H073/fusion_ep$ep.pt \
+    --features_fp16 \
+    --use_cached_features \
+    --frames 16 >> H073.log 2>&1
+done
