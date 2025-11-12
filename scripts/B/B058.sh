@@ -26,9 +26,9 @@ python3 -m polyspace.train.train_converter \
 	--log_every 20 \
 	--pin_memory \
 	--loss_l2 0.1 \
-	--loss_cos 0.0 \
+	--loss_cos 0.4 \
 	--loss_nce 0.0 \
 	--loss_vic 0.0 \
-	--loss_bar 0.9 \
+	--loss_bar 0.5 \
 	--loss_l1 0.0 \
-	--save_dir ./checkpoints/B046 >> B046.log 2>&1
+	--save_dir ./checkpoints/B058 >> B058.log 2>&1

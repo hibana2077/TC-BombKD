@@ -17,6 +17,11 @@
 | B037-B039 | [0.0, 0.0, 0.0, 1.0, 0.0, 0.0] | 66.77 | 97.87 |
 | B040-B042 | [0.0, 0.0, 1.0, 0.0, 0.0, 0.0] | 75.00 | 98.48 |
 | B043-B045 | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | 70.12 | 97.87 |
+| B046-B048 | [0.1, 0.0, 0.0, 0.0, 0.9, 0.0] | TBD | TBD |
+| B049-B051 | [0.1, 0.1, 0.0, 0.0, 0.8, 0.0] | TBD | TBD |
+| B052-B054 | [0.1, 0.2, 0.0, 0.0, 0.7, 0.0] | TBD | TBD |
+| B055-B057 | [0.1, 0.3, 0.0, 0.0, 0.6, 0.0] | TBD | TBD |
+| B058-B060 | [0.1, 0.4, 0.0, 0.0, 0.5, 0.0] | TBD | TBD |
 
 ## Loss Weights
 
@@ -28,3 +33,4 @@
 - B022-B033: TimeSformer pre-trained on ssv2
 - B034-B036: ViViT pre-trained on Kinetics400
 - B037-B045: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2
+- B046-B060: {VideoMAE, TimeSformer, ViViT} pre-trained on Kinetics400 and ssv2 with Type-B converters and different loss weight combinations
