@@ -60,6 +60,7 @@ The cached mode is especially beneficial when:
 
 import json
 import os
+import random
 from typing import Dict, List, Optional
 
 import torch
@@ -232,6 +233,7 @@ def train_fusion(
     cached_features_path: Optional[str] = None,
     features_fp16: bool = False,
     advance_cls_head: bool = False,
+    seed: Optional[int] = None,
 ):
     """Train fusion head for multi-teacher knowledge distillation.
     
@@ -251,7 +253,19 @@ def train_fusion(
         use_cached_features: If True, load pre-extracted features instead of raw videos
         cached_features_path: Path to cached features (overrides dataset_root if provided)
         features_fp16: If True, cached features are in FP16 and will be converted to FP32
+        seed: Random seed for reproducibility. If None, uses random seed and prints it.
     """
+    # Set random seed for reproducibility
+    if seed is None:
+        seed = random.randint(0, 2**32 - 1)
+        print(f"[Fusion] Using random seed: {seed}")
+    else:
+        print(f"[Fusion] Using specified seed: {seed}")
+    
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
+    
     os.makedirs(save_dir, exist_ok=True)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -484,6 +498,8 @@ if __name__ == "__main__":
                         help="Cached features are in FP16 format (will be converted to FP32 for training)")
     parser.add_argument("--advance-cls-head", action="store_true",
                         help="Use advanced classification head (attention pooling + MLP) for fusion head")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed for reproducibility. If not specified, uses random seed.")
     
     args = parser.parse_args()
 
@@ -504,4 +520,5 @@ if __name__ == "__main__":
         cached_features_path=args.cached_features_path,
         features_fp16=args.features_fp16,
         advance_cls_head=args.advance_cls_head,
+        seed=args.seed,
     )
