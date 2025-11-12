@@ -4,7 +4,7 @@
 #PBS -l ngpus=1
 #PBS -l ncpus=12
 #PBS -l mem=24GB
-#PBS -l walltime=48:00:00
+#PBS -l walltime=20:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -16,17 +16,17 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 python3 -m polyspace.train.train_fusion \
-    --dataset ssv2 \
-    --root ./features/ssv2/features_ssv2_train.index.json \
+    --dataset breakfast \
+    --root ./features/features_breakfast_train.index.json \
     --split train \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
-    --converters ./checkpoints/S019/converters_ep10.pt \
-    --classes 174 \
+    --converters ./checkpoints/B070/converters_ep10.pt \
+    --classes 10 \
     --frames 16 \
     --batch 8 \
-    --epochs 20 \
+    --epochs 50 \
     --lr 3e-4 \
     --use_cached_features \
     --features_fp16 \
-    --save_dir ./checkpoints/S020 >> S020.log 2>&1
+    --save_dir ./checkpoints/B071 >> B071.log 2>&1
