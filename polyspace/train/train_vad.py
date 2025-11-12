@@ -130,6 +130,7 @@ def train_vad(
     save_dir: str = "./checkpoints/vad",
     features_fp16: bool = False,
     freeze_translators: bool = False,
+    converters_ckpt: Optional[str] = None,
 ):
     os.makedirs(save_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -161,8 +162,26 @@ def train_vad(
         student_model = build_backbone(student).to(device).eval()
         feat_dim = getattr(student_model, "feat_dim", 768)
 
-    # Build translators (T_k) mapping student -> surrogate teacher dims
-    translators = load_translators(translator_kind, d_in=feat_dim, teacher_dims=teacher_dims)
+    # Build or load translators (T_k)
+    if converters_ckpt is not None and os.path.isfile(converters_ckpt):
+        ck = torch.load(converters_ckpt, map_location="cpu")
+        keys = ck.get("keys", [])
+        # If teacher_dims not explicitly set from CLI (or mismatched), infer from ckpt
+        if not teacher_dims or len(teacher_dims) != len(keys):
+            teacher_dims = [ck.get("d_out", feat_dim)] * len(keys)
+        translators_dict = nn.ModuleDict()
+        for k in keys:
+            translators_dict[k] = build_converter(
+                ck.get("kind", translator_kind),
+                d_in=ck.get("d_in", feat_dim),
+                d_out=ck.get("d_out", feat_dim),
+            )
+        translators_dict.load_state_dict(ck["state_dict"], strict=False)
+        translators = nn.ModuleList([translators_dict[k] for k in keys])
+        loaded_from_ckpt = True
+    else:
+        translators = load_translators(translator_kind, d_in=feat_dim, teacher_dims=teacher_dims)
+        loaded_from_ckpt = False
     translators.to(device)
     if freeze_translators:
         for p in translators.parameters():
@@ -206,15 +225,20 @@ def train_vad(
             running += float(loss.item()) * z0.size(0)
             count += z0.size(0)
             pbar.set_postfix({"loss": f"{loss.item():.3f}", "avg": f"{running/count:.3f}"})
-        torch.save({
+        save_obj = {
             "fusion": fusion.state_dict(),
-            "translators": translators.state_dict(),
             "proj": proj.state_dict(),
             "feat_dim": feat_dim,
             "teacher_dims": teacher_dims,
             "proj_dim": proj_dim,
             "epoch": ep,
-        }, os.path.join(save_dir, f"vad_ep{ep}.pt"))
+            "translator_kind": translator_kind,
+        }
+        if loaded_from_ckpt:
+            save_obj["converters_ckpt"] = converters_ckpt
+        else:
+            save_obj["translators_state_dict"] = translators.state_dict()
+        torch.save(save_obj, os.path.join(save_dir, f"vad_ep{ep}.pt"))
 
 
 if __name__ == "__main__":
@@ -224,8 +248,9 @@ if __name__ == "__main__":
     ap.add_argument("--root", type=str, required=True)
     ap.add_argument("--split", type=str, default="train")
     ap.add_argument("--student", type=str, default="vjepa2")
-    ap.add_argument("--teacher_dims", type=int, nargs="+", default=[768, 768, 768], help="Dims of surrogate spaces")
+    ap.add_argument("--teacher_dims", type=int, nargs="+", default=[768, 768, 768], help="Dims of surrogate spaces (ignored length if --converters_ckpt provided)")
     ap.add_argument("--translator_kind", type=str, default="b")
+    ap.add_argument("--converters_ckpt", type=str, default=None, help="Path to pre-trained converters checkpoint (optional)")
     ap.add_argument("--use_cached_features", action="store_true")
     ap.add_argument("--cached_features_path", type=str, default=None)
     ap.add_argument("--batch", type=int, default=4)
@@ -256,5 +281,6 @@ if __name__ == "__main__":
         margin=args.margin,
         save_dir=args.save_dir,
         features_fp16=args.features_fp16,
-        freeze_translators=args.freeze_translators,
+    freeze_translators=args.freeze_translators,
+    converters_ckpt=args.converters_ckpt,
     )
