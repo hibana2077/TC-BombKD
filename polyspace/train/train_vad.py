@@ -147,12 +147,9 @@ def train_vad(
         # Simpler: require that extracted features used actual backbone names; we can't guess.
         # For now assume teacher_dims correspond to converter outputs after building converters.
         ds = VADFeatureDataset(feat_path, teacher_keys=[])
-        # Just use student features; translators will synthesize spaces.
+        # Just use student features; translators will synthesize spaces. Use padding collate to handle variable lengths.
         sampler = ShardAwareSampler(ds._fpairs, within_shard_shuffle=True)
-        dl = DataLoader(ds, batch_size=batch_size, sampler=sampler, num_workers=0, collate_fn=lambda b: {
-            "student_feat": torch.stack([x["x"] for x in b], dim=0),
-            "label": torch.tensor([x.get("label", 0) for x in b], dtype=torch.long),
-        })
+        dl = DataLoader(ds, batch_size=batch_size, sampler=sampler, num_workers=0, collate_fn=vad_feature_collate)
         # Determine feat dim
         feat_dim = ds[0]["student_feat"].shape[-1]
         student_model = None
