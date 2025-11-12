@@ -826,10 +826,13 @@ class ShanghaiTechVADDataset(Dataset):
             self.root = base if os.path.isdir(base) else root
         else:
             self.root = root
-
+        
         train_vdir = os.path.join(self.root, "training", "videos")
         test_frames_dir = os.path.join(self.root, "testing", "frames")
-        mask_dir = os.path.join(self.root, "test_frame_mask")
+        # Some layouts store masks under root/test_frame_mask, others under root/testing/test_frame_mask
+        mask_root_a = os.path.join(self.root, "test_frame_mask")
+        mask_root_b = os.path.join(self.root, "testing", "test_frame_mask")
+        mask_dir = mask_root_a if os.path.isdir(mask_root_a) else (mask_root_b if os.path.isdir(mask_root_b) else mask_root_a)
 
         samples: List[VideoSample] = []
         if self.split.startswith("train"):

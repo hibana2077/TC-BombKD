@@ -161,15 +161,18 @@ def eval_vad(
         if os.path.basename(base_root.rstrip("/")) != "ShanghaiTech":
             cand = os.path.join(base_root, "ShanghaiTech")
             base_root = cand if os.path.isdir(cand) else base_root
-        mask_dir = os.path.join(base_root, "test_frame_mask")
-        if os.path.isdir(mask_dir):
+        # Try both common mask locations
+        mask_candidates = [
+            os.path.join(base_root, "test_frame_mask"),
+            os.path.join(base_root, "testing", "test_frame_mask"),
+        ]
+        mask_dir = next((p for p in mask_candidates if os.path.isdir(p)), None)
+        if mask_dir is not None:
             new_labels = []
             for p in paths:
-                # Determine clip id from path (frames dir or file base name)
                 try:
-                    # If path points to a directory, take its basename
-                    clip_id = os.path.basename(p.rstrip("/"))
-                    # If it looks like a file with extension, strip extension
+                    # clip_id is the basename of the frames directory or filename base
+                    clip_id = os.path.basename(str(p).rstrip("/"))
                     if os.path.splitext(clip_id)[1]:
                         clip_id = os.path.splitext(clip_id)[0]
                     mpath = os.path.join(mask_dir, f"{clip_id}.npy")
