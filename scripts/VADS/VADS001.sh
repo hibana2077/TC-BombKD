@@ -27,7 +27,7 @@ mkdir -p "$CONV_DIR"
 python3 -m polyspace.train.train_converter \
   --features ${FEATURES_DIR}/features_shanghaitech_train.index.json \
   --teachers videomae timesformer vivit \
-  --d_in 768 \
+  --d_in 1024 \
   --d_out 768 \
   --epochs 10 \
   --batch 128 \
