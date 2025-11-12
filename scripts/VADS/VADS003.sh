@@ -19,7 +19,7 @@ export HF_HUB_OFFLINE=1
 cd ../..
 
 FEATURES_TEST=./features/stech/features_shanghaitech_test.index.json
-CKPT=./checkpoints/vad/vad_ep10.pt
+CKPT=./checkpoints/vad/vad_ep20.pt
 
 python3 -m polyspace.train.eval_vad \
   --dataset shanghaitech \
