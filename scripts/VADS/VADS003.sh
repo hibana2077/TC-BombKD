@@ -19,17 +19,26 @@ export HF_HUB_OFFLINE=1
 cd ../..
 
 FEATURES_TEST=./features/stech/features_shanghaitech_test.index.json
-CKPT=./checkpoints/vad/vad_ep20.pt
+for ep in $(seq 1 20); do
+    CKPT=./checkpoints/vad/vad_ep${ep}.pt
+    OUT=./features/stech/vad_scores_test_ep$(printf "%02d" "${ep}").json
 
-python3 -m polyspace.train.eval_vad \
-  --dataset shanghaitech \
-  --root ./datasets/Stech/shanghaitech \
-  --split test \
-  --use_cached_features \
-  --cached_features_path ${FEATURES_TEST} \
-  --ckpt ${CKPT} \
-  --batch 128 \
-  --features_fp16 \
-  --save_scores ./features/stech/vad_scores_test.json \
-  --frame_level \
-  --debug >> VADS003.log 2>&1
+    if [ ! -f "${CKPT}" ]; then
+        echo "[WARN] Checkpoint not found: ${CKPT}. Skipping." >> VADS003.log 2>&1
+        continue
+    fi
+
+    echo "[INFO] Evaluating checkpoint: ${CKPT} -> ${OUT}" >> VADS003.log 2>&1
+    python3 -m polyspace.train.eval_vad \
+        --dataset shanghaitech \
+        --root ./datasets/Stech/shanghaitech \
+        --split test \
+        --use_cached_features \
+        --cached_features_path "${FEATURES_TEST}" \
+        --ckpt "${CKPT}" \
+        --batch 128 \
+        --features_fp16 \
+        --save_scores "${OUT}" \
+        --frame_level \
+        --debug >> VADS003.log 2>&1
+done
