@@ -16,15 +16,15 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 for ep in {1..50}; do
-  echo "checkpoint: ep$ep" >> S003.log 2>&1
+  echo "checkpoint: ep$ep" >> S018.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --dataset ssv2 \
     --root ./features/ssv2features_ssv2_test.index.json \
     --split test \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
-    --converters ./checkpoints/S001/converters_ep10.pt \
+    --converters ./checkpoints/S016/converters_ep10.pt \
     --use_cached_features \
     --features_fp16 \
-    --fusion ./checkpoints/S002/fusion_ep$ep.pt >> S003.log 2>&1
+    --fusion ./checkpoints/S017/fusion_ep$ep.pt >> S018.log 2>&1
 done
