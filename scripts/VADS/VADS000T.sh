@@ -24,4 +24,4 @@ python3 -m polyspace.data.featurize \
   --out ./features/stech \
   --student vjepa2 \
   --teachers videomae timesformer vivit \
-  --shard_size 500 --frames 16 --fp16 >> VADS000.log 2>&1
+  --shard_size 500 --frames 16 --fp16 >> VADS000T.log 2>&1
