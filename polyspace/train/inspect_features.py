@@ -239,6 +239,49 @@ def summarize_features(
         shp = per_key[tk]["example_shape"]
         d_out_map[tk] = shp[0] if shp and len(shp) == 1 else None
 
+    # Try to detect label key and compute distribution over scanned records
+    label_candidates = [
+        "label",
+        "labels",
+        "class_id",
+        "target",
+        "y",
+        "category",
+    ]
+    label_key: Optional[str] = None
+    for c in label_candidates:
+        if c in all_keys:
+            label_key = c
+            break
+
+    label_counts: Optional[Dict[Any, int]] = None
+    if label_key is not None and use_n > 0:
+        from collections import Counter
+
+        def to_hashable(v: Any) -> Any:
+            # convert numpy scalars to python types; leave strings as-is
+            if isinstance(v, (np.integer,)):
+                return int(v)
+            if isinstance(v, (np.floating,)):
+                # keep ints as ints if possible
+                ival = int(v)
+                return ival if float(ival) == float(v) else float(v)
+            return v
+
+        cnt: Counter = Counter()
+        for i in range(use_n):
+            rec = meta[i]
+            if label_key in rec:
+                lv = rec[label_key]
+                # Count only scalar-like labels; skip arrays for now
+                if not is_sequence(lv) or (isinstance(lv, np.ndarray) and lv.ndim == 0):
+                    if isinstance(lv, np.ndarray) and lv.ndim == 0:
+                        lv = lv.item()
+                    cnt[to_hashable(lv)] += 1
+        if cnt:
+            # Sort by frequency desc, then by label for stable output
+            label_counts = dict(sorted(cnt.items(), key=lambda x: (-x[1], str(x[0]))))
+
     return {
         "num_records": n,
         "scanned_records": use_n,
@@ -248,6 +291,8 @@ def summarize_features(
         "teacher_keys": teacher_keys,
         "d_in": d_in,
         "d_out_map": d_out_map,
+        "label_key": label_key,
+        "label_counts": label_counts,
     }
 
 
@@ -328,6 +373,16 @@ def print_report(summary: Dict[str, Any], meta: List[Dict[str, Any]], sample: in
                     if len(s) > 80:
                         s = s[:77] + '...'
                     print(f"      {k}: {s}")
+
+    # Label distribution at the very end
+    lkey = summary.get("label_key")
+    lcnt = summary.get("label_counts")
+    if lkey and lcnt:
+        print()
+        print(f"Label distribution (key='{lkey}') over {summary['scanned_records']} scanned records:")
+        # pretty print counts sorted
+        for lab, c in lcnt.items():
+            print(f"  - {lab}: {c}")
 
 
 def main():
