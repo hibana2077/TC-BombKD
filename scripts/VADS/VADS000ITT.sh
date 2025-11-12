@@ -19,5 +19,5 @@ cd ../..
 # 產出：features_ssv2_train.index.json + 多個 features_ssv2_train_shard_XXXXX.pkl
 python3 -m polyspace.train.inspect_features \
   --features ./features/stech/features_shanghaitech_test.index.json \
-  --limit 100 \
+  --limit 0 \
   --sample 3 >> VADS000ITT.log 2>&1
