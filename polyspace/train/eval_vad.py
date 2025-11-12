@@ -85,10 +85,42 @@ def eval_vad(
     proj_dim = ck.get("proj_dim", 128)
 
     # Rebuild translators and fusion
-    # translator_kind not stored; assume 'b'
+    # Prefer loading translators from the saved state dict or referenced converters ckpt
     from ..models.converters import build_converter
     translators = torch.nn.ModuleList([build_converter("b", d_in=feat_dim_ck, d_out=d_t) for d_t in teacher_dims])
-    translators.load_state_dict(ck.get("translators", {}), strict=False)
+    # Try multiple keys for backward compatibility
+    loaded_translators = False
+    if "translators_state_dict" in ck:
+        try:
+            translators.load_state_dict(ck["translators_state_dict"], strict=False)
+            loaded_translators = True
+        except Exception:
+            loaded_translators = False
+    elif "translators" in ck:
+        try:
+            translators.load_state_dict(ck["translators"], strict=False)
+            loaded_translators = True
+        except Exception:
+            loaded_translators = False
+    # If checkpoint references a converters ckpt, load from there
+    if not loaded_translators and "converters_ckpt" in ck and isinstance(ck["converters_ckpt"], str):
+        conv_path = ck["converters_ckpt"]
+        if os.path.isfile(conv_path):
+            try:
+                conv_ck = torch.load(conv_path, map_location="cpu")
+                keys = conv_ck.get("keys", [])
+                d_in = int(conv_ck.get("d_in", feat_dim_ck))
+                d_out = int(conv_ck.get("d_out", feat_dim_ck))
+                kind = conv_ck.get("kind", "b")
+                # Rebuild translators to match converter ckpt
+                translators = torch.nn.ModuleList([build_converter(kind, d_in=d_in, d_out=d_out) for _ in keys])
+                translators.load_state_dict(conv_ck.get("state_dict", {}), strict=False)
+                # Update teacher dims to reflect d_out repeated
+                teacher_dims = [d_out] * len(keys)
+                loaded_translators = True
+            except Exception:
+                loaded_translators = False
+
     fusion = ResidualGatedFusion(d=feat_dim_ck, converter_dims=teacher_dims, low_rank=128, cls_dim=0)
     fusion.load_state_dict(ck["fusion"])
     proj = ProjectionHead(d_in=feat_dim_ck, d_lat=proj_dim)
@@ -121,6 +153,35 @@ def eval_vad(
                 paths.extend(batch["path"])
             else:
                 paths.extend(["unknown"] * s.size(0))
+
+    # If evaluating ShanghaiTech in cached mode and labels are missing (all zeros), try inferring from frame masks
+    if use_cached_features and data_name in {"shanghaitech", "stech", "shtech"} and split.lower().startswith("test"):
+        # Resolve root to ShanghaiTech folder
+        base_root = root
+        if os.path.basename(base_root.rstrip("/")) != "ShanghaiTech":
+            cand = os.path.join(base_root, "ShanghaiTech")
+            base_root = cand if os.path.isdir(cand) else base_root
+        mask_dir = os.path.join(base_root, "test_frame_mask")
+        if os.path.isdir(mask_dir):
+            new_labels = []
+            for p in paths:
+                # Determine clip id from path (frames dir or file base name)
+                try:
+                    # If path points to a directory, take its basename
+                    clip_id = os.path.basename(p.rstrip("/"))
+                    # If it looks like a file with extension, strip extension
+                    if os.path.splitext(clip_id)[1]:
+                        clip_id = os.path.splitext(clip_id)[0]
+                    mpath = os.path.join(mask_dir, f"{clip_id}.npy")
+                    if os.path.isfile(mpath):
+                        m = np.load(mpath)
+                        yv = 1 if np.sum(m) > 0 else 0
+                    else:
+                        yv = 0
+                except Exception:
+                    yv = 0
+                new_labels.append(yv)
+            labels = new_labels
 
     # Compute AUC if both classes present
     try:
