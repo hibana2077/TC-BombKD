@@ -1,8 +1,8 @@
 #!/bin/bash
 #PBS -P rp06
-#PBS -q dgxa100
+#PBS -q gpuvolta
 #PBS -l ngpus=1
-#PBS -l ncpus=16
+#PBS -l ncpus=12
 #PBS -l mem=24GB
 #PBS -l walltime=00:10:00
 #PBS -l wd
@@ -30,7 +30,7 @@ python3 -m polyspace.train.train_converter \
   --d_in 1024 \
   --d_out 768 \
   --epochs 10 \
-  --batch 128 \
+  --batch 32 \
   --workers 1 \
   --lr 3e-4 \
   --loss_l2 0.0 \
