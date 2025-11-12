@@ -4,7 +4,7 @@
 #PBS -l ngpus=1
 #PBS -l ncpus=16
 #PBS -l mem=24GB
-#PBS -l walltime=24:00:00
+#PBS -l walltime=00:10:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -33,6 +33,12 @@ python3 -m polyspace.train.train_converter \
   --batch 128 \
   --workers 1 \
   --lr 3e-4 \
+  --loss_l2 0.0 \
+  --loss_cos 1.0 \
+  --loss_nce 0.0 \
+  --loss_vic 0.0 \
+  --loss_bar 0.0 \
+  --loss_l1 0.0 \
   --save_dir ${CONV_DIR} \
   --kind b \
   --shuffle shard \
