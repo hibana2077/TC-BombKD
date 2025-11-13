@@ -14,7 +14,6 @@
 | H019-H021 | C | [0.0, 0.2, 0.0, 0.6, 0.2, 0.0] | - | - | Multi-teacher (C converter) |
 | H022-H024 | C | [0.0, 0.1, 0.0, 0.0, 0.9, 0.0] | - | - | Multi-teacher (C converter) |
 | H025-H027 | C | [0.0, 0.25, 0.25, 0.25, 0.25, 0.0] | - | - | Multi-teacher (C converter) |
-| H028-H030 | (extra) | (scripts present for an extra set) [see scripts/H] | - | - | Multi-teacher |
 
 
 ## Loss Weights Configuration
