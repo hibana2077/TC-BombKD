@@ -27,5 +27,6 @@ for ep in {1..50}; do
     --fusion ./checkpoints/UH074/fusion_ep$ep.pt \
     --use_cached_features \
     --features_fp16 \
+    --advance-cls-head \
     --frames 16 >> UH075.log 2>&1
 done

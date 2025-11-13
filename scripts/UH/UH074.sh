@@ -29,4 +29,5 @@ python3 -m polyspace.train.train_fusion \
     --lr 3e-4 \
     --use_cached_features \
     --features_fp16 \
+    --advance-cls-head \
     --save_dir ./checkpoints/UH074 >> UH074.log 2>&1
