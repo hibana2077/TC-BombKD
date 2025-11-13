@@ -29,6 +29,6 @@ python3 -m polyspace.train.train_converter \
 	--loss_cos 0.10 \
 	--loss_nce 0.0 \
 	--loss_vic 0.0 \
-	--loss_bar 0.55 \
-	--loss_l1 0.0 \
+	--loss_bar 0.0 \
+	--loss_l1 0.20 \
 	--save_dir ./checkpoints/U052 >> U052.log 2>&1
