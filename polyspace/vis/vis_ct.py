@@ -214,7 +214,12 @@ def compute_embeddings_cached(
         x = rec["x"]  # (L, D) or (D)
         if x.dim() == 1:
             x = x.unsqueeze(0)
-        x = x.to(device)
+        # Ensure input dtype matches converter parameters to avoid matmul dtype mismatch
+        try:
+            param_dtype = next(converter.parameters()).dtype
+        except StopIteration:
+            param_dtype = torch.float32
+        x = x.to(device, dtype=param_dtype)
         # Add batch dim for converter
         xb = x.unsqueeze(0)
         pre = pool_sequence(xb).detach().cpu().numpy()
