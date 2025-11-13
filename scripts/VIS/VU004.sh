@@ -23,7 +23,9 @@ python -m polyspace.vis.vis_ct \
   --teachers videomae timesformer vivit \
   --teacher videomae \
   --converters ./checkpoints/U010/converters_ep10.pt \
-  --per_class 20 \
+  --per_class 50 \
   --max_classes 10 \
+  --marker_size 200 \
+  --legend_marker_size 20 \
   --class_selection lr \
   --save_dir ./VIS/VU004 >> VU004.log 2>&1
