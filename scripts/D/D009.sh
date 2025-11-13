@@ -28,5 +28,5 @@ for ep in {1..50}; do
     --features_fp16 \
     --use_cached_features \
     --advance-cls-head \
-    --frames 64 >> D009.log 2>&1
+    --frames 32 >> D009.log 2>&1
 done

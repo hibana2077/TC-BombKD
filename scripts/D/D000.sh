@@ -26,7 +26,7 @@ python3 -m polyspace.data.featurize \
 	--teachers videomae timesformer vivit \
 	--batch 2 \
 	--workers 2 \
-	--frames 64 \
+	--frames 32 \
 	--shard_size 512 \
 	--fp16 \
 	--no_tqdm \
