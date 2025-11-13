@@ -26,8 +26,8 @@ python3 -m polyspace.train.train_converter \
 	--log_every 20 \
 	--pin_memory \
 	--loss_l2 0.0 \
-	--loss_cos 1.0 \
-	--loss_nce 0.0 \
+	--loss_cos 0.0 \
+	--loss_nce 1.0 \
 	--loss_vic 0.0 \
 	--loss_bar 0.0 \
 	--loss_l1 0.0 \
