@@ -75,7 +75,7 @@ def main() -> None:
     # Combine legends from both axes
     all_lines = left_lines + right_lines
     labels = [l.get_label() for l in all_lines]
-    legend = ax_left.legend(all_lines, labels, fontsize=args.legend_fontsize, loc="upper left", frameon=True)
+    legend = ax_left.legend(all_lines, labels, fontsize=args.legend_fontsize, loc="best", frameon=True)
 
     fig.tight_layout()
 
@@ -95,4 +95,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-# python3 plot_alpha_eval.py --csv epoch.csv --out breakfast.png
+# python3 plot_alpha_eval.py --csv epoch.csv --out breakfast.png --linewidth 3.5
