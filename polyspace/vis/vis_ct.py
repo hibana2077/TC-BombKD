@@ -26,7 +26,7 @@ from ..data.datasets import (
 )
 from ..models.backbones import build_backbone
 from ..models.converters import build_converter
-from ..train.utils import pool_sequence
+from ..train.utils import pool_sequence, FeaturePairs
 
 
 def _set_seed(seed: int):
@@ -50,6 +50,10 @@ def build_dataset(name: str, root: str, split: str, num_frames: int):
         return UCF101Dataset(root, split=split, num_frames=num_frames)
     if name in {"uav", "uav-human", "uavhuman"}:
         return UAVHumanDataset(root, split=split, num_frames=num_frames)
+    if name in {"shanghaitech", "stech", "shtech"}:
+        # Lazy import to avoid circular when not needed
+        from ..data.datasets import ShanghaiTechVADDataset  # type: ignore
+        return ShanghaiTechVADDataset(root, split=split, num_frames=num_frames)
     raise ValueError(f"Unknown dataset {name}")
 
 
@@ -182,6 +186,47 @@ def compute_embeddings(
     pre_arr = np.concatenate(pre_list, axis=0)
     post_arr = np.concatenate(post_list, axis=0)
     y_arr = np.concatenate(y_list, axis=0)
+    return pre_arr, post_arr, y_arr
+
+
+def compute_embeddings_cached(
+    features_path: str,
+    indices: List[int],
+    teacher_key: str,
+    converter: torch.nn.Module,
+    use_fp16: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute pre/post embeddings from cached student features without decoding videos.
+
+    - pre: pooled student features from cached records
+    - post: pooled converter outputs applied to cached student features
+    - y: integer labels if present, else -1
+    """
+    ds = FeaturePairs(features_path, [])
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    converter = converter.to(device).eval()
+    pre_list: List[np.ndarray] = []
+    post_list: List[np.ndarray] = []
+    y_list: List[int] = []
+    torch.set_grad_enabled(False)
+    for i in indices:
+        rec = ds[i]
+        x = rec["x"]  # (L, D) or (D)
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        x = x.to(device)
+        # Add batch dim for converter
+        xb = x.unsqueeze(0)
+        pre = pool_sequence(xb).detach().cpu().numpy()
+        zhat = converter(xb)
+        post = pool_sequence(zhat).detach().cpu().numpy()
+        pre_list.append(pre)
+        post_list.append(post)
+        y = int(rec.get("label", -1)) if isinstance(rec, dict) else -1
+        y_list.append(y)
+    pre_arr = np.concatenate(pre_list, axis=0)
+    post_arr = np.concatenate(post_list, axis=0)
+    y_arr = np.array(y_list, dtype=np.int64)
     return pre_arr, post_arr, y_arr
 
 
@@ -400,7 +445,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Visualize pre/post-converter features with t-SNE and UMAP")
     parser.add_argument("--dataset", type=str, required=True)
-    parser.add_argument("--root", type=str, required=True)
+    parser.add_argument("--root", type=str, required=True, help="Path to dataset root (videos) or features (.index.json/.pkl dir)")
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--student", type=str, default="vjepa2")
     parser.add_argument("--teachers", type=str, nargs="+", required=True, help="Teacher keys (used to select converter)")
@@ -449,11 +494,37 @@ def main():
     _set_seed(args.seed)
     os.makedirs(args.save_dir, exist_ok=True)
 
-    # Build dataset and select indices
+    # Decide whether --root points to cached features (like train_fusion) or raw videos
+    def _is_features_entry(p: str) -> bool:
+        if os.path.isfile(p) and (p.lower().endswith(".index.json") or p.lower().endswith(".pkl") or p.lower().endswith(".json")):
+            return True
+        if os.path.isdir(p):
+            # directory with index json or shard pkls
+            try:
+                names = os.listdir(p)
+                return any(n.endswith(".index.json") for n in names) or any(n.endswith(".pkl") and "_shard_" in n for n in names)
+            except Exception:
+                return False
+        return False
+
+    using_cached_features = _is_features_entry(args.root)
+
+    # Build dataset or feature index and select indices
     t0 = time.perf_counter()
     print("[stage] dataset: start =>", args.dataset, args.split)
-    ds = build_dataset(args.dataset, args.root, args.split, args.frames)
-    labels = [int(ds[i]["label"]) for i in range(len(ds))]
+    if using_cached_features:
+        # Use FeaturePairs index to read labels without touching videos
+        # For compatibility we require at least one teacher key; pick the first
+        # No need to require teacher features here; load student+labels only
+        fp = FeaturePairs(args.root, [])
+        labels = []
+        for i in range(len(fp)):
+            rec = fp[i]
+            labels.append(int(rec.get("label", -1)))
+        ds = None  # not used in cached mode
+    else:
+        ds = build_dataset(args.dataset, args.root, args.split, args.frames)
+        labels = [int(ds[i]["label"]) for i in range(len(ds))]
 
     convs = None
     if args.class_selection == "random":
@@ -466,7 +537,12 @@ def main():
         convs = load_converters(args.converters, args.teachers)
         tk_temp = args.teacher if (args.teacher is not None) else args.teachers[0]
         converter_temp = convs[tk_temp].eval()
-        max_samples_for_selection = min(len(ds), args.selection_max_samples)
+        if using_cached_features:
+            # In cached mode, use feature index length
+            fp = FeaturePairs(args.root, [])
+            max_samples_for_selection = min(len(fp), args.selection_max_samples)
+        else:
+            max_samples_for_selection = min(len(ds), args.selection_max_samples)
         temp_indices = list(range(max_samples_for_selection))
         cache_used = False
         cache_path = _selection_cache_path(
@@ -486,7 +562,10 @@ def main():
             except Exception:
                 cache_used = False
         if not cache_used:
-            pre_temp, post_temp, y_temp = compute_embeddings(ds, temp_indices, args.student, converter_temp, batch_size=args.batch)
+            if using_cached_features:
+                pre_temp, post_temp, y_temp = compute_embeddings_cached(args.root, temp_indices, tk_temp, converter_temp)
+            else:
+                pre_temp, post_temp, y_temp = compute_embeddings(ds, temp_indices, args.student, converter_temp, batch_size=args.batch)
             if args.cache:
                 try:
                     np.savez_compressed(
@@ -533,7 +612,10 @@ def main():
         t2 = time.perf_counter()
         converter = convs[tk].eval()
         print(f"[stage] compute_embeddings: start | batch= {args.batch} | teacher={tk}")
-        pre, post, y = compute_embeddings(ds, sel_idx, args.student, converter, batch_size=args.batch)
+        if using_cached_features:
+            pre, post, y = compute_embeddings_cached(args.root, sel_idx, tk, converter)
+        else:
+            pre, post, y = compute_embeddings(ds, sel_idx, args.student, converter, batch_size=args.batch)
         print(f"[stage] compute_embeddings: done in {time.perf_counter()-t2:.2f}s | pre={pre.shape} post={post.shape}")
 
         # Dimensionality reductions

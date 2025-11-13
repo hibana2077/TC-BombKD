@@ -15,25 +15,15 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
-python3 -m polyspace.vis.vis_ct \
+python -m polyspace.vis.vis_ct \
   --dataset ucf101 \
   --root ./features/features_ucf101_train.index.json \
   --split train \
   --student vjepa2 \
   --teachers videomae timesformer vivit \
-  --all_teachers \
-  --marker_size 200 \
-  --legend_marker_size 20 \
-  --legend_font_size 14 \
-  --legend_layout horizontal \
-  --class_selection lr \
-  --selection_max_samples 2000 \
-  --cache \
-  --cache_dir ./VIS/.cache \
+  --teacher videomae \
   --converters ./checkpoints/U010/converters_ep10.pt \
-  --frames 16 \
-  --per_class 50 \
-  --max_classes 12 \
-  --batch 8 \
-  --seed 42 \
-  --save_dir ./VIS/VU004 >> VU004.log 2>&1
+  --per_class 20 \
+  --max_classes 10 \
+  --class_selection lr \
+  --save_dir ./VU004 >> VU004.log 2>&1
