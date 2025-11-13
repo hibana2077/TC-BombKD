@@ -211,3 +211,5 @@ docs/converter.md
 datasets/.DS_Store
 polyspace/.DS_Store
 docs/VAD.md
+figures/alpha_epoch/.DS_Store
+figures/alpha_epoch/breakfast/.DS_Store
