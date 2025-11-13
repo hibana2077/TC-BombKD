@@ -26,4 +26,4 @@ python -m polyspace.vis.vis_ct \
   --per_class 20 \
   --max_classes 10 \
   --class_selection lr \
-  --save_dir ./VU004 >> VU004.log 2>&1
+  --save_dir ./VIS/VU004 >> VU004.log 2>&1
