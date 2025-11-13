@@ -31,4 +31,4 @@ python3 -m polyspace.train.train_converter \
 	--loss_vic 0.0 \
 	--loss_bar 0.0 \
 	--loss_l1 0.0 \
-	--save_dir ./checkpoints/H001 >> H001.log 2>&1
+	--save_dir ./checkpoints/D001 >> D001.log 2>&1
