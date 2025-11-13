@@ -16,15 +16,15 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 python -m polyspace.vis.vis_ct \
-  --dataset breakfast \
-  --root ./features/features_breakfast_train.index.json \
+  --dataset hmdb51 \
+  --root ./features/features_hmdb51_train.index.json \
   --split train \
   --student vjepa2 \
   --teachers videomae timesformer vivit \
   --teacher videomae \
-  --converters ./checkpoints/B097/converters_ep10.pt \
+  --converters ./checkpoints/H001/converters_ep10.pt \
   --per_class 50 \
-  --max_classes 6 \
+  --max_classes 10 \
   --marker_size 200 \
   --legend_marker_size 20 \
   --class_selection lr \
