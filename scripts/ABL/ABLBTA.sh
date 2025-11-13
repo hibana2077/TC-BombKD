@@ -20,7 +20,7 @@ python3 -m polyspace.train.feature_cls \
     --train ./features/features_breakfast_train.index.json \
     --test ./features/features_breakfast_test.index.json \
     --feature conv:timesformer \
-    --converters ./checkpoints/B097/converters_ep10.pt \
+    --converters ./checkpoints/B040/converters_ep10.pt \
     --teachers timesformer \
     --remap_by_order \
-    --ar_models svm lr >> ABLBT002.log 2>&1
+    --ar_models svm lr >> ABLBTA.log 2>&1
