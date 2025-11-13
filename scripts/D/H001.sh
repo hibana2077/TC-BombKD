@@ -16,7 +16,7 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 python3 -m polyspace.train.train_converter \
-	--features ./features/features_hmdb51_train.index.json \
+	--features ./features/features_diving48_train.index.json \
 	--teachers videomae timesformer vivit \
 	--d_in 1024 --d_out 768 \
 	--kind c \
