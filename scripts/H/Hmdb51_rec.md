@@ -5,7 +5,6 @@
 | Code Range | Type | Loss Weights | Top-1 Acc (%) | Top-5 Acc (%) | Teacher Models |
 |------------|------|--------------|---------------|---------------|----------------|
 | H001-H003 | A | [0.0, 1.0, 0.0, 0.0, 0.0, 0.0] | 82.19 | 95.71 | Multi-teacher (A converter) |
-
 | H004-H006 | A | [0.0, 0.8, 0.2, 0.0, 0.0, 0.0] | - | - | Multi-teacher (A converter) |
 | H007-H009 | A | [0.0, 0.7, 0.0, 0.3, 0.0, 0.0] | - | - | Multi-teacher (A converter) |
 | H010-H012 | B | [0.0, 0.0, 1.0, 0.0, 0.0, 0.0] | - | - | Multi-teacher (B converter) |

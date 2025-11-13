@@ -4,7 +4,7 @@
 #PBS -l ngpus=1
 #PBS -l ncpus=12
 #PBS -l mem=24GB
-#PBS -l walltime=12:40:00
+#PBS -l walltime=20:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -15,18 +15,19 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
-for ep in {1..50}; do
-  echo "checkpoint: ep$ep" >> H015.log 2>&1
-  python3 -m polyspace.train.eval_downstream \
+python3 -m polyspace.train.train_fusion \
     --dataset hmdb51 \
-    --root ./features/features_hmdb51_test.index.json \
-    --split test \
+    --root ./features/features_hmdb51_train.index.json \
+    --split train \
     --student vjepa2 \
     --teachers videomae timesformer vivit \
-    --converters ./checkpoints/H013/converters_ep10.pt \
-    --fusion ./checkpoints/H014/fusion_ep$ep.pt \
-    --features_fp16 \
+    --converters ./checkpoints/H001/converters_ep10.pt \
+    --classes 51 \
+    --frames 64 \
+    --batch 8 \
+    --epochs 50 \
+    --lr 3e-4 \
     --use_cached_features \
+    --features_fp16 \
     --advance-cls-head \
-    --frames 16 >> H015.log 2>&1
-done
+    --save_dir ./checkpoints/H002 >> H002.log 2>&1
