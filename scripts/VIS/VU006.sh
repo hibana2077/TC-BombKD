@@ -16,16 +16,16 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 python -m polyspace.vis.vis_ct \
-  --dataset hmdb51 \
-  --root ./features/features_hmdb51_train.index.json \
+  --dataset ucf101 \
+  --root ./features/features_ucf101_train.index.json \
   --split train \
   --student vjepa2 \
   --teachers videomae timesformer vivit \
-  --teacher timesformer \
-  --converters ./checkpoints/H001/converters_ep10.pt \
+  --teacher videomae \
+  --converters ./checkpoints/U010/converters_ep10.pt \
   --per_class 50 \
   --max_classes 10 \
   --marker_size 200 \
   --legend_marker_size 20 \
   --class_selection lr \
-  --save_dir ./VIS/VU005 >> VU005.log 2>&1
+  --save_dir ./VIS/VU004 >> VU004.log 2>&1
