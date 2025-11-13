@@ -50,7 +50,7 @@ python3 -m polyspace.train.train_fusion \
     --save_dir ./checkpoints/U061 >> U061.log 2>&1
 
 for ep in {1..50}; do
-  echo "checkpoint: ep$ep" >> U061.log 2>&1
+  echo "checkpoint: ep$ep" >> U061E.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --dataset ucf101 \
   --root ./features/features_ucf101_test.index.json \
