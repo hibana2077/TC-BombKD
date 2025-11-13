@@ -1,6 +1,5 @@
 import os
 import json
-import math
 import random
 import time
 from typing import Dict, List, Tuple
@@ -8,103 +7,140 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.metrics import r2_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
+import matplotlib.pyplot as plt
+
+from ..data.datasets import (
+    collate_fn,
+    HMDB51Dataset,
+    Diving48Dataset,
+    SSv2Dataset,
+    BreakfastDataset,
+    UCF101Dataset,
+    UAVHumanDataset,
+)
+from ..models.backbones import build_backbone
+from ..models.converters import build_converter
+from ..train.utils import pool_sequence
 
 
 def _set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
-def build_dataset(dataset: str, root: str, split: str, frames: int):
-    from polyspace.data.datasets import get_dataset
-    return get_dataset(dataset, root, split, frames)
+def build_dataset(name: str, root: str, split: str, num_frames: int):
+    name = name.lower()
+    if name == "hmdb51":
+        return HMDB51Dataset(root, split=split, num_frames=num_frames)
+    if name in {"diving48", "div48"}:
+        return Diving48Dataset(root, split=split, num_frames=num_frames)
+    if name in {"ssv2", "something-something-v2"}:
+        return SSv2Dataset(root, split=split, num_frames=num_frames)
+    if name in {"breakfast", "breakfast-10"}:
+        return BreakfastDataset(root, split=split, num_frames=num_frames)
+    if name in {"ucf101", "ucf-101"}:
+        return UCF101Dataset(root, split=split, num_frames=num_frames)
+    if name in {"uav", "uav-human", "uavhuman"}:
+        return UAVHumanDataset(root, split=split, num_frames=num_frames)
+    raise ValueError(f"Unknown dataset {name}")
 
 
-def build_backbone(student_name: str):
-    from polyspace.models.backbones import get_backbone
-    return get_backbone(student_name)
+def load_converters(ckpt_path: str, keys: List[str]) -> torch.nn.ModuleDict:
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    d_in, d_out = ckpt.get("d_in"), ckpt.get("d_out")
+    kind = ckpt.get("kind", "b")
+    teacher_lens = ckpt.get("teacher_lens", {}) or {}
+    token_k = ckpt.get("token_k", None)
+    modules = torch.nn.ModuleDict()
+    for k in keys:
+        kwargs = {}
+        if k in teacher_lens:
+            kwargs["target_len"] = int(teacher_lens[k])
+        if token_k is not None:
+            kwargs["K"] = int(token_k)
+        mod = build_converter(kind, d_in, d_out, **kwargs)
+        setattr(mod, "out_dim", int(d_out) if d_out is not None else None)
+        modules[k] = mod
+    modules.load_state_dict(ckpt["state_dict"], strict=False)
+    for p in modules.parameters():
+        p.requires_grad_(False)
+    return modules
 
 
-def load_converters(converters_path: str, teachers: List[str]):
-    from polyspace.models.converters import get_converter
-    ckpt = torch.load(converters_path, map_location="cpu")
-    convs = {}
-    for tk in teachers:
-        convs[tk] = get_converter(ckpt, tk)
-    return convs
-
-
-def collate_fn(batch):
-    videos = torch.stack([torch.from_numpy(item["video"]) for item in batch])
-    labels = torch.tensor([item["label"] for item in batch])
-    return {"video": videos, "label": labels}
-
-
-def pool_sequence(x: torch.Tensor) -> torch.Tensor:
-    if x.dim() == 3:
-        return x.mean(dim=1)
-    return x
-
-
-def select_indices_by_class(labels: List[int], per_class: int = 20, max_classes: int = 10) -> List[int]:
-    from collections import defaultdict
-    by_class = defaultdict(list)
-    for i, lbl in enumerate(labels):
-        by_class[lbl].append(i)
-    selected_classes = sorted(by_class.keys())[:max_classes]
-    sel_idx = []
-    for cid in selected_classes:
-        indices = by_class[cid]
-        sel_idx.extend(indices[:per_class])
-    return sel_idx
+def select_indices_by_class(labels: List[int], per_class: int, max_classes: int) -> List[int]:
+    idx_by_class: Dict[int, List[int]] = {}
+    for i, y in enumerate(labels):
+        idx_by_class.setdefault(int(y), []).append(i)
+    cls_ids = sorted(idx_by_class.keys())[: max_classes if max_classes is not None else len(idx_by_class)]
+    chosen: List[int] = []
+    for cid in cls_ids:
+        cand = idx_by_class[cid]
+        random.shuffle(cand)
+        chosen.extend(cand[:per_class])
+    return chosen
 
 
 def select_indices_by_accuracy(
     features: np.ndarray,
     labels: List[int],
     indices: List[int],
-    per_class: int = 20,
-    max_classes: int = 10,
+    per_class: int,
+    max_classes: int,
     classifier: str = "lr",
     cv: int = 3,
 ) -> Tuple[List[int], List[int]]:
-    from collections import defaultdict
-    by_class = defaultdict(list)
-    for i, lbl in enumerate(labels):
-        by_class[lbl].append(i)
-    if classifier == "lr":
-        clf = LogisticRegression(max_iter=1000, random_state=42)
-    else:
-        clf = RandomForestClassifier(n_estimators=100, random_state=42)
-    class_scores = {}
-    for cid, idxs in by_class.items():
-        if len(idxs) < cv:
-            continue
-        y_cls = np.array([1 if labels[i] == cid else 0 for i in range(len(labels))])
-        scores = cross_val_score(clf, features, y_cls, cv=cv, scoring="accuracy")
-        class_scores[cid] = float(np.mean(scores))
-    sorted_classes = sorted(class_scores.keys(), key=lambda c: class_scores[c], reverse=True)[:max_classes]
-    sel_idx = []
-    for cid in sorted_classes:
-        class_indices = by_class[cid]
-        sel_idx.extend([indices[i] for i in class_indices[:per_class]])
-    return sel_idx, sorted_classes
+    """Select classes by binary classification accuracy (1-vs-rest).
 
+    Returns (selected_original_indices, selected_class_ids).
+    """
+    idx_by_class: Dict[int, List[int]] = {}
+    for i, y in enumerate(labels):
+        idx_by_class.setdefault(int(y), []).append(i)
 
-def _selection_cache_path(cache_dir: str, dataset: str, split: str, student: str, teacher: str, frames: int, method: str, n: int) -> str:
-    os.makedirs(cache_dir, exist_ok=True)
-    base = f"{dataset}_{split}_{student}_{teacher}_f{frames}_{method}_N{n}"
-    return os.path.join(cache_dir, base + ".npz")
+    valid_classes = [cid for cid, locs in idx_by_class.items() if len(locs) >= max(per_class, cv)]
+    if not valid_classes:
+        raise ValueError("No classes have enough samples for selection")
+
+    class_scores: List[Tuple[int, float]] = []
+    for cid in valid_classes:
+        y_binary = np.array([1 if int(labels[i]) == cid else 0 for i in range(len(labels))])
+        if classifier.lower() == "lr":
+            clf = LogisticRegression(max_iter=1000, random_state=42, solver="lbfgs")
+        elif classifier.lower() == "rf":
+            clf = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10)
+        else:
+            raise ValueError(f"Unknown classifier: {classifier}")
+        pos = int((y_binary == 1).sum())
+        neg = int((y_binary == 0).sum())
+        folds = max(2, min(cv, pos, neg)) if min(pos, neg) >= 2 else 0
+        try:
+            if folds >= 2:
+                scores = cross_val_score(clf, features, y_binary, cv=folds, scoring="accuracy")
+                avg_score = float(np.mean(scores))
+            else:
+                avg_score = 0.0
+        except Exception:
+            avg_score = 0.0
+        class_scores.append((cid, avg_score))
+
+    class_scores.sort(key=lambda x: x[1], reverse=True)
+    selected_classes = [cid for cid, _ in class_scores[:max_classes]]
+
+    chosen_local: List[int] = []
+    for cid in selected_classes:
+        cand = idx_by_class[cid]
+        random.shuffle(cand)
+        chosen_local.extend(cand[:per_class])
+    chosen_original = [indices[i] for i in chosen_local]
+    return chosen_original, selected_classes
 
 
 def compute_embeddings(
@@ -114,13 +150,10 @@ def compute_embeddings(
     converter: torch.nn.Module,
     batch_size: int = 8,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    # Build a minimalist DataLoader from selected indices
     subset = [dataset[i] for i in indices]
-    # Simple manual batching to avoid writing a custom Dataset wrapper here
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     student = build_backbone(student_name)
     student.to(device).eval()
-    # Ensure converter is on the same target device
     converter = converter.to(device).eval()
     pre_list: List[np.ndarray] = []
     post_list: List[np.ndarray] = []
@@ -133,17 +166,15 @@ def compute_embeddings(
     torch.set_grad_enabled(False)
     for chunk in _batches(subset, batch_size):
         batch = collate_fn(chunk)
-        # Move video to the working device
         vid = batch["video"].float().div(255.0).to(device, non_blocking=True)
         y = batch["label"].cpu().numpy()
-        z0 = student(vid)["feat"]  # (B, N0, D0)
-        # Safety: enforce that the features are on the same device as the converter
+        z0 = student(vid)["feat"]
         conv_device = next(converter.parameters()).device
         if isinstance(z0, torch.Tensor) and z0.device != conv_device:
             z0 = z0.to(conv_device, non_blocking=True)
-        pre = pool_sequence(z0).detach().cpu().numpy()  # (B, D0)
+        pre = pool_sequence(z0).detach().cpu().numpy()
         zhat = converter(z0)
-        post = pool_sequence(zhat).detach().cpu().numpy()  # (B, D1)
+        post = pool_sequence(zhat).detach().cpu().numpy()
         pre_list.append(pre)
         post_list.append(post)
         y_list.append(y)
@@ -155,24 +186,19 @@ def compute_embeddings(
 
 
 def fit_dr(pre: np.ndarray, post: np.ndarray, seed: int = 42):
-    # Common PCA to stabilize TSNE/UMAP inputs
     d = min(64, pre.shape[1], post.shape[1])
-    # If dims differ, reduce both to d via separate PCAs fitted on their own; for TSNE stability we'll concatenate later
     pca_pre = PCA(n_components=min(d, pre.shape[1]))
     pca_post = PCA(n_components=min(d, post.shape[1]))
     pre_p = pca_pre.fit_transform(pre)
     post_p = pca_post.fit_transform(post)
 
-    # t-SNE on each separately
     tsne = TSNE(n_components=2, perplexity=min(30, max(5, (len(pre) - 1) // 3)), random_state=seed, init="pca")
     pre_ts = tsne.fit_transform(pre_p)
     tsne2 = TSNE(n_components=2, perplexity=min(30, max(5, (len(post) - 1) // 3)), random_state=seed, init="pca")
     post_ts = tsne2.fit_transform(post_p)
 
-    # UMAP separately to avoid alignment issues
     try:
         import umap  # type: ignore
-
         um = umap.UMAP(n_components=2, n_neighbors=15, min_dist=0.1, random_state=seed)
         pre_um = um.fit_transform(pre_p)
         um2 = umap.UMAP(n_components=2, n_neighbors=15, min_dist=0.1, random_state=seed)
@@ -204,14 +230,23 @@ def save_scatter(
     dpi: int = 200,
     marker_size: float = 6.0,
 ):
-    # Plot without title/axes/ticks
     plt.figure(figsize=(8, 8), dpi=dpi)
     colors = _get_colors(len(labels))
     for i, cid in enumerate(labels):
         mask = (y == cid)
         if not np.any(mask):
             continue
-        plt.scatter(xy[mask, 0], xy[mask, 1], s=marker_size, color=colors[i], label=str(cid), alpha=0.8, marker='s', edgecolors='black', linewidths=1.5)
+        plt.scatter(
+            xy[mask, 0],
+            xy[mask, 1],
+            s=marker_size,
+            color=colors[i],
+            label=str(cid),
+            alpha=0.8,
+            marker='s',
+            edgecolors='black',
+            linewidths=1.5,
+        )
     plt.xticks([])
     plt.yticks([])
     for spine in plt.gca().spines.values():
@@ -222,30 +257,24 @@ def save_scatter(
 
 
 def save_legend(save_path: str, labels: List[int], dpi: int = 200, marker_size: float = 10.0, font_size: float = 10.0, layout: str = 'vertical'):
-    """Save legend as a separate figure.
-    
-    Args:
-        save_path: Path to save the legend
-        labels: List of class IDs
-        dpi: Resolution
-        marker_size: Size of markers in legend
-        font_size: Font size for labels
-        layout: 'vertical' or 'horizontal'
-    """
     plt.figure(figsize=(6, 6), dpi=dpi)
     colors = _get_colors(len(labels))
-    handles = [plt.Line2D([0], [0], marker='s', color='w', label=str(cid), markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=1.5, markersize=marker_size)
-               for i, cid in enumerate(labels)]
+    handles = [
+        plt.Line2D(
+            [0], [0], marker='s', color='w', label=str(cid),
+            markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=1.5, markersize=marker_size
+        )
+        for i, cid in enumerate(labels)
+    ]
     ax = plt.gca()
     ax.axis('off')
     ncol = len(labels) if layout.lower() == 'horizontal' else 2
-    leg = ax.legend(handles=handles, loc='center', frameon=False, ncol=ncol, fontsize=font_size)
+    ax.legend(handles=handles, loc='center', frameon=False, ncol=ncol, fontsize=font_size)
     plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
     plt.close()
 
 
 def _pairwise_mmd(x: np.ndarray, y: np.ndarray, gamma: float = None) -> float:
-    # x: (n,d), y: (m,d)
     X = torch.from_numpy(x).float()
     Y = torch.from_numpy(y).float()
     if gamma is None:
@@ -264,7 +293,6 @@ def _pairwise_mmd(x: np.ndarray, y: np.ndarray, gamma: float = None) -> float:
     Kxy = k(X, Y)
     n = X.shape[0]
     m = Y.shape[0]
-    # Unbiased estimator
     mmd2 = (Kxx.sum() - torch.diag(Kxx).sum()) / (n * (n - 1) + 1e-8) \
          + (Kyy.sum() - torch.diag(Kyy).sum()) / (m * (m - 1) + 1e-8) \
          - 2 * Kxy.mean()
@@ -272,14 +300,13 @@ def _pairwise_mmd(x: np.ndarray, y: np.ndarray, gamma: float = None) -> float:
 
 
 def _symmetric_kl_gaussian(mu0: np.ndarray, S0: np.ndarray, mu1: np.ndarray, S1: np.ndarray, eps: float = 1e-6) -> float:
-    # KL(N0||N1) + KL(N1||N0)
     d = mu0.shape[0]
     S0r = S0 + eps * np.eye(d)
     S1r = S1 + eps * np.eye(d)
     invS1 = np.linalg.inv(S1r)
     invS0 = np.linalg.inv(S0r)
     def kl(m0, C0, invC1, C1):
-        diff = (mu1 - mu0).reshape(-1, 1)
+        diff = (mu1 - m0).reshape(-1, 1)
         term = np.trace(invC1 @ C0) + diff.T @ invC1 @ diff - d + np.log(np.linalg.det(C1) / (np.linalg.det(C0) + 1e-12) + 1e-12)
         return float(0.5 * term.squeeze())
     k01 = kl(mu0, S0r, invS1, S1r)
@@ -288,13 +315,10 @@ def _symmetric_kl_gaussian(mu0: np.ndarray, S0: np.ndarray, mu1: np.ndarray, S1:
 
 
 def _avg_wasserstein_1d(x: np.ndarray, y: np.ndarray) -> float:
-    # Average 1D Wasserstein distance across each dimension
-    from numpy import sort
     d = x.shape[1]
     n = min(x.shape[0], y.shape[0])
     if n <= 1:
         return float(np.linalg.norm(x.mean(0) - y.mean(0)))
-    # Subsample to equal sizes for a quick approximation
     idx_x = np.random.permutation(x.shape[0])[:n]
     idx_y = np.random.permutation(y.shape[0])[:n]
     xs = x[idx_x]
@@ -308,7 +332,6 @@ def _avg_wasserstein_1d(x: np.ndarray, y: np.ndarray) -> float:
 
 
 def compute_metrics(pre_pca: np.ndarray, post_pca: np.ndarray, y: np.ndarray) -> Dict:
-    # Align dimensionality (already reduced by PCA independently). To compare, further project both to common d via PCA on concat
     d_common = min(pre_pca.shape[1], post_pca.shape[1], 32)
     joint = np.concatenate([pre_pca[:, :d_common], post_pca[:, :d_common]], axis=0)
     pca = PCA(n_components=d_common)
@@ -316,19 +339,13 @@ def compute_metrics(pre_pca: np.ndarray, post_pca: np.ndarray, y: np.ndarray) ->
     pre_c = joint_p[: pre_pca.shape[0]]
     post_c = joint_p[pre_pca.shape[0] :]
 
-    # Pairwise per-sample metrics
-    # Cosine similarity
     pre_n = pre_c / (np.linalg.norm(pre_c, axis=1, keepdims=True) + 1e-8)
     post_n = post_c / (np.linalg.norm(post_c, axis=1, keepdims=True) + 1e-8)
     cos = float(np.mean(np.sum(pre_n * post_n, axis=1)))
 
-    # R2 per-dimension then average
-    r2s = []
-    for j in range(d_common):
-        r2s.append(r2_score(pre_c[:, j], post_c[:, j]))
+    r2s = [r2_score(pre_c[:, j], post_c[:, j]) for j in range(d_common)]
     r2 = float(np.mean(r2s))
 
-    # Distribution distances (overall)
     mu0 = pre_c.mean(axis=0)
     mu1 = post_c.mean(axis=0)
     S0 = np.cov(pre_c, rowvar=False)
@@ -337,7 +354,6 @@ def compute_metrics(pre_pca: np.ndarray, post_pca: np.ndarray, y: np.ndarray) ->
     mmd = _pairwise_mmd(pre_c, post_c)
     wdist = _avg_wasserstein_1d(pre_c, post_c)
 
-    # Per-class summary
     classes = sorted(list({int(c) for c in y}))
     per_class = {}
     for cid in classes:
@@ -351,12 +367,8 @@ def compute_metrics(pre_pca: np.ndarray, post_pca: np.ndarray, y: np.ndarray) ->
         skl_c = _symmetric_kl_gaussian(mu0_c, S0_c, mu1_c, S1_c)
         mmd_c = _pairwise_mmd(pre_c[m], post_c[m])
         wdist_c = _avg_wasserstein_1d(pre_c[m], post_c[m])
-        # Cosine on centroids
         c_cos = float(np.dot(mu0_c, mu1_c) / (np.linalg.norm(mu0_c) * np.linalg.norm(mu1_c) + 1e-8))
-        # R2 per-dim between paired samples
-        r2s_c = []
-        for j in range(d_common):
-            r2s_c.append(r2_score(pre_c[m][:, j], post_c[m][:, j]))
+        r2s_c = [r2_score(pre_c[m][:, j], post_c[m][:, j]) for j in range(d_common)]
         per_class[int(cid)] = {
             "cosine": c_cos,
             "symmetric_kl": float(skl_c),
@@ -375,6 +387,12 @@ def compute_metrics(pre_pca: np.ndarray, post_pca: np.ndarray, y: np.ndarray) ->
         },
         "per_class": per_class,
     }
+
+
+def _selection_cache_path(cache_dir: str, dataset: str, split: str, student: str, teacher: str, frames: int, method: str, n: int) -> str:
+    os.makedirs(cache_dir, exist_ok=True)
+    base = f"{dataset}_{split}_{student}_{teacher}_f{frames}_{method}_N{n}"
+    return os.path.join(cache_dir, base + ".npz")
 
 
 def main():
@@ -443,8 +461,8 @@ def main():
         sel_classes = sorted(list({labels[i] for i in sel_idx}))
         print(f"[stage] dataset: done in {time.perf_counter()-t0:.2f}s | samples={len(sel_idx)} | classes={len(sel_classes)} | selection=random")
     else:
-        # Extract features for classifier-based selection (use post-converter features)
-        print(f"[stage] class_selection: extracting features for {args.class_selection.UPPER()} classification...")
+        # Extract features for classifier-based selection using post-converter features
+        print(f"[stage] class_selection: extracting features for {args.class_selection.upper()} classification...")
         convs = load_converters(args.converters, args.teachers)
         tk_temp = args.teacher if (args.teacher is not None) else args.teachers[0]
         converter_temp = convs[tk_temp].eval()
@@ -492,7 +510,7 @@ def main():
         )
         print(f"[stage] dataset: done in {time.perf_counter()-t0:.2f}s | samples={len(sel_idx)} | classes={len(sel_classes)} | selection={args.class_selection.upper()}")
 
-    # Load converters if not already
+    # Load converters if not already loaded
     if convs is None:
         t1 = time.perf_counter()
         print("[stage] load_converters: start =>", args.converters, "teachers=", args.teachers)
@@ -524,7 +542,7 @@ def main():
         dr = fit_dr(pre, post, seed=args.seed)
         print(f"[stage] dimensionality_reduction: done in {time.perf_counter()-t3:.2f}s")
 
-        # Save plots (no title/axes); legend separately
+        # Save plots and legend
         prefix = f"{args.dataset}_{args.split}_{tk}"
         print("[stage] save_plots: start")
         save_scatter(dr["pre_tsne"], y, os.path.join(args.save_dir, f"{prefix}_pre_tsne.png"), sel_classes, dpi=args.dpi, marker_size=args.marker_size)
