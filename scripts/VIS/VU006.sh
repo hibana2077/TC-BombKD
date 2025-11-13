@@ -28,4 +28,4 @@ python -m polyspace.vis.vis_ct \
   --marker_size 200 \
   --legend_marker_size 20 \
   --class_selection lr \
-  --save_dir ./VIS/VU004 >> VU004.log 2>&1
+  --save_dir ./VIS/VU006 >> VU006.log 2>&1
