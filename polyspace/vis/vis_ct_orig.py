@@ -11,6 +11,9 @@ import torch.nn.functional as F
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.metrics import r2_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
 import matplotlib.pyplot as plt
 
 from ..data.datasets import (
@@ -86,6 +89,74 @@ def select_indices_by_class(labels: List[int], per_class: int, max_classes: int)
         random.shuffle(cand)
         chosen.extend(cand[:per_class])
     return chosen
+
+
+def select_indices_by_accuracy(
+    features: np.ndarray,
+    labels: List[int],
+    per_class: int,
+    max_classes: int,
+    classifier: str = "lr",
+    cv: int = 3,
+) -> Tuple[List[int], List[int]]:
+    """Select classes based on classification accuracy (high to low).
+    
+    Args:
+        features: Feature array (N, D)
+        labels: List of labels
+        per_class: Number of samples per class
+        max_classes: Maximum number of classes to select
+        classifier: 'lr' for LogisticRegression or 'rf' for RandomForest
+        cv: Number of cross-validation folds
+    
+    Returns:
+        Tuple of (selected_indices, selected_class_ids)
+    """
+    idx_by_class: Dict[int, List[int]] = {}
+    for i, y in enumerate(labels):
+        idx_by_class.setdefault(int(y), []).append(i)
+    
+    # Filter classes with sufficient samples
+    valid_classes = [cid for cid, indices in idx_by_class.items() if len(indices) >= max(per_class, cv)]
+    
+    if len(valid_classes) == 0:
+        raise ValueError("No classes have enough samples")
+    
+    # Compute per-class accuracy
+    class_scores = []
+    for cid in valid_classes:
+        # Binary classification: current class vs rest
+        y_binary = np.array([1 if int(labels[i]) == cid else 0 for i in range(len(labels))])
+        
+        if classifier.lower() == "lr":
+            clf = LogisticRegression(max_iter=1000, random_state=42, solver='lbfgs')
+        elif classifier.lower() == "rf":
+            clf = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10)
+        else:
+            raise ValueError(f"Unknown classifier: {classifier}")
+        
+        try:
+            scores = cross_val_score(clf, features, y_binary, cv=min(cv, len(idx_by_class[cid])), scoring='accuracy')
+            avg_score = float(np.mean(scores))
+        except Exception:
+            avg_score = 0.0
+        
+        class_scores.append((cid, avg_score))
+    
+    # Sort by accuracy (descending)
+    class_scores.sort(key=lambda x: x[1], reverse=True)
+    
+    # Select top classes
+    selected_classes = [cid for cid, _ in class_scores[:max_classes]]
+    
+    # Sample indices from selected classes
+    chosen: List[int] = []
+    for cid in selected_classes:
+        cand = idx_by_class[cid]
+        random.shuffle(cand)
+        chosen.extend(cand[:per_class])
+    
+    return chosen, selected_classes
 
 
 def compute_embeddings(
@@ -192,7 +263,7 @@ def save_scatter(
         mask = (y == cid)
         if not np.any(mask):
             continue
-        plt.scatter(xy[mask, 0], xy[mask, 1], s=marker_size, color=colors[i], label=str(cid), alpha=0.8, marker='*', edgecolors='black', linewidths=1.5)
+        plt.scatter(xy[mask, 0], xy[mask, 1], s=marker_size, color=colors[i], label=str(cid), alpha=0.8, marker='s', edgecolors='black', linewidths=1.5)
     plt.xticks([])
     plt.yticks([])
     for spine in plt.gca().spines.values():
@@ -202,14 +273,25 @@ def save_scatter(
     plt.close()
 
 
-def save_legend(save_path: str, labels: List[int], dpi: int = 200, marker_size: float = 10.0):
+def save_legend(save_path: str, labels: List[int], dpi: int = 200, marker_size: float = 10.0, font_size: float = 10.0, layout: str = 'vertical'):
+    """Save legend as a separate figure.
+    
+    Args:
+        save_path: Path to save the legend
+        labels: List of class IDs
+        dpi: Resolution
+        marker_size: Size of markers in legend
+        font_size: Font size for labels
+        layout: 'vertical' or 'horizontal'
+    """
     plt.figure(figsize=(6, 6), dpi=dpi)
     colors = _get_colors(len(labels))
-    handles = [plt.Line2D([0], [0], marker='*', color='w', label=str(cid), markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=1.5, markersize=marker_size)
+    handles = [plt.Line2D([0], [0], marker='s', color='w', label=str(cid), markerfacecolor=colors[i], markeredgecolor='black', markeredgewidth=1.5, markersize=marker_size)
                for i, cid in enumerate(labels)]
     ax = plt.gca()
     ax.axis('off')
-    leg = ax.legend(handles=handles, loc='center', frameon=False, ncol=2)
+    ncol = len(labels) if layout.lower() == 'horizontal' else 2
+    leg = ax.legend(handles=handles, loc='center', frameon=False, ncol=ncol, fontsize=font_size)
     plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
     plt.close()
 
@@ -362,6 +444,8 @@ def main():
     parser.add_argument("--frames", type=int, default=16)
     parser.add_argument("--per_class", type=int, default=20, help="Number of samples per class")
     parser.add_argument("--max_classes", type=int, default=10, help="Max number of classes to visualize")
+    parser.add_argument("--class_selection", type=str, default="random", choices=["random", "lr", "rf"], help="Method to select classes: random, lr (LogisticRegression), or rf (RandomForest)")
+    parser.add_argument("--cv_folds", type=int, default=3, help="Number of cross-validation folds for classifier-based selection")
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save_dir", type=str, default="./vis")
@@ -378,6 +462,19 @@ def main():
         default=10.0,
         help="Marker size used in legend (matplotlib markersize units)",
     )
+    parser.add_argument(
+        "--legend_font_size",
+        type=float,
+        default=10.0,
+        help="Font size used in legend labels",
+    )
+    parser.add_argument(
+        "--legend_layout",
+        type=str,
+        default="vertical",
+        choices=["vertical", "horizontal"],
+        help="Legend layout: vertical or horizontal",
+    )
     args = parser.parse_args()
 
     _set_seed(args.seed)
@@ -388,14 +485,43 @@ def main():
     print("[stage] dataset: start =>", args.dataset, args.split)
     ds = build_dataset(args.dataset, args.root, args.split, args.frames)
     labels = [int(ds[i]["label"]) for i in range(len(ds))]
-    sel_idx = select_indices_by_class(labels, per_class=args.per_class, max_classes=args.max_classes)
-    sel_classes = sorted(list({labels[i] for i in sel_idx}))
-    print(f"[stage] dataset: done in {time.perf_counter()-t0:.2f}s | samples={len(sel_idx)} | classes={len(sel_classes)}")
+    
+    if args.class_selection == "random":
+        sel_idx = select_indices_by_class(labels, per_class=args.per_class, max_classes=args.max_classes)
+        sel_classes = sorted(list({labels[i] for i in sel_idx}))
+        print(f"[stage] dataset: done in {time.perf_counter()-t0:.2f}s | samples={len(sel_idx)} | classes={len(sel_classes)} | selection=random")
+    else:
+        # Need to extract features first for classifier-based selection
+        print(f"[stage] class_selection: extracting features for {args.class_selection.upper()} classification...")
+        # Load converter to get initial features
+        convs = load_converters(args.converters, args.teachers)
+        if args.teacher is not None:
+            tk_temp = args.teacher
+        else:
+            tk_temp = args.teachers[0]
+        converter_temp = convs[tk_temp].eval()
+        # Extract features from all samples (or a subset for efficiency)
+        max_samples_for_selection = min(len(ds), 1000)  # Limit for efficiency
+        temp_indices = list(range(max_samples_for_selection))
+        pre_temp, _, y_temp = compute_embeddings(ds, temp_indices, args.student, converter_temp, batch_size=args.batch)
+        sel_idx, sel_classes = select_indices_by_accuracy(
+            pre_temp, 
+            [labels[i] for i in temp_indices],
+            per_class=args.per_class,
+            max_classes=args.max_classes,
+            classifier=args.class_selection,
+            cv=args.cv_folds,
+        )
+        print(f"[stage] dataset: done in {time.perf_counter()-t0:.2f}s | samples={len(sel_idx)} | classes={len(sel_classes)} | selection={args.class_selection.upper()}")
 
     # Load converters (pick teachers according to --teacher/--all_teachers)
-    t1 = time.perf_counter()
-    print("[stage] load_converters: start =>", args.converters, "teachers=", args.teachers)
-    convs = load_converters(args.converters, args.teachers)
+    # Skip if already loaded for classifier-based selection
+    if args.class_selection == "random":
+        t1 = time.perf_counter()
+        print("[stage] load_converters: start =>", args.converters, "teachers=", args.teachers)
+        convs = load_converters(args.converters, args.teachers)
+        print(f"[stage] load_converters: done in {time.perf_counter()-t1:.2f}s")
+    
     # Determine which teacher(s) to use
     if args.teacher is not None:
         if args.teacher not in args.teachers:
@@ -405,7 +531,7 @@ def main():
         selected_teachers = list(args.teachers)
     else:
         selected_teachers = [args.teachers[0]]
-    print(f"[stage] load_converters: done in {time.perf_counter()-t1:.2f}s | selected={selected_teachers}")
+    print(f"[stage] selected_teachers: {selected_teachers}")
 
     for tk in selected_teachers:
         # Compute features
@@ -458,7 +584,14 @@ def main():
             dpi=args.dpi,
             marker_size=args.marker_size,
         )
-        save_legend(os.path.join(args.save_dir, f"{prefix}_legend.png"), sel_classes, dpi=args.dpi, marker_size=args.legend_marker_size)
+        save_legend(
+            os.path.join(args.save_dir, f"{prefix}_legend.png"),
+            sel_classes,
+            dpi=args.dpi,
+            marker_size=args.legend_marker_size,
+            font_size=args.legend_font_size,
+            layout=args.legend_layout,
+        )
         print("[stage] save_plots: done")
 
         # Metrics on PCA-aligned space
