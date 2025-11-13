@@ -3,8 +3,8 @@
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
-#PBS -l mem=36GB
-#PBS -l walltime=24:00:00
+#PBS -l mem=64GB
+#PBS -l walltime=08:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -25,7 +25,7 @@ python3 -m polyspace.data.featurize \
 	--student vjepa2 \
 	--teachers videomae timesformer vivit \
 	--batch 2 \
-	--workers 2 \
+	--workers 1 \
 	--frames 64 \
 	--shard_size 512 \
 	--fp16 \
