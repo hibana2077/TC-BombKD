@@ -47,7 +47,7 @@ def main() -> None:
 
     epochs = df["epoch"] if "epoch" in df.columns else pd.RangeIndex(start=1, stop=len(df) + 1)
 
-    plt.style.use("seaborn-whitegrid")
+    # plt.style.use("seaborn-whitegrid")
     fig, ax_left = plt.subplots(figsize=(8, 4.5))
 
     # Plot alphas on left y-axis
