@@ -33,7 +33,7 @@ python3 -m polyspace.vis.vis_ct_orig \
   --max_classes 12 \
   --batch 8 \
   --seed 42 \
-  --save_dir ./VIS/VU002 >> VU002.log 2>&1
+  --save_dir ./VIS/VU004 >> VU004.log 2>&1
 
 
 # # Use Logistic Regression to select classes by accuracy
