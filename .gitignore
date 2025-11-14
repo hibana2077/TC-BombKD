@@ -213,3 +213,5 @@ polyspace/.DS_Store
 docs/VAD.md
 figures/alpha_epoch/.DS_Store
 figures/alpha_epoch/breakfast/.DS_Store
+figures/alpha_epoch/breakfast/eval.txt
+figures/alpha_epoch/breakfast/training.txt
