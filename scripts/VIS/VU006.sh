@@ -21,7 +21,7 @@ python -m polyspace.vis.vis_ct \
   --split train \
   --student vjepa2 \
   --teachers videomae timesformer vivit \
-  --teacher videomae \
+  --teacher timesformer \
   --converters ./checkpoints/U010/converters_ep10.pt \
   --per_class 50 \
   --max_classes 10 \
