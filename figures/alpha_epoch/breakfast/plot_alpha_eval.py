@@ -40,6 +40,15 @@ def main() -> None:
     # Expected columns from provided CSV
     alphas = ["alpha_videomae", "alpha_timesformer", "alpha_vivit"]
     evals = ["eval_top1", "eval_top5"]
+    
+    # Display names for legend
+    display_names = {
+        "alpha_videomae": "VideoMAE",
+        "alpha_timesformer": "TimeSformer",
+        "alpha_vivit": "ViViT",
+        "eval_top1": "Top-1",
+        "eval_top5": "Top-5"
+    }
 
     for col in alphas + evals:
         if col not in df.columns:
@@ -54,11 +63,11 @@ def main() -> None:
     left_lines = []
     for name in alphas:
         if name in df.columns:
-            ln, = ax_left.plot(epochs, df[name], label=name, linewidth=args.linewidth)
+            ln, = ax_left.plot(epochs, df[name], label=display_names.get(name, name), linewidth=args.linewidth)
             left_lines.append(ln)
 
-    ax_left.set_xlabel("epoch", fontsize=args.font_size)
-    ax_left.set_ylabel("alpha", fontsize=args.font_size)
+    ax_left.set_xlabel("", fontsize=args.font_size)
+    ax_left.set_ylabel("", fontsize=args.font_size)
     ax_left.tick_params(axis="both", labelsize=args.font_size)
 
     # Plot evals on right y-axis
@@ -66,16 +75,16 @@ def main() -> None:
     right_lines = []
     for name in evals:
         if name in df.columns:
-            ln, = ax_right.plot(epochs, df[name], label=name, linewidth=args.linewidth, linestyle="--")
+            ln, = ax_right.plot(epochs, df[name], label=display_names.get(name, name), linewidth=args.linewidth, linestyle="--")
             right_lines.append(ln)
 
-    ax_right.set_ylabel("eval (%)", fontsize=args.font_size)
+    ax_right.set_ylabel("", fontsize=args.font_size)
     ax_right.tick_params(axis="both", labelsize=args.font_size)
 
     # Combine legends from both axes
     all_lines = left_lines + right_lines
     labels = [l.get_label() for l in all_lines]
-    legend = ax_left.legend(all_lines, labels, fontsize=args.legend_fontsize, loc="best", frameon=True)
+    legend = ax_left.legend(all_lines, labels, fontsize=args.legend_fontsize, loc="best", frameon=True, framealpha=0.85)
 
     fig.tight_layout()
 
