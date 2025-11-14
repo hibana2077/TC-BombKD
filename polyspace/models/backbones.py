@@ -216,4 +216,8 @@ def build_backbone(name: str, device: Optional[str] = None) -> FeatureBackbone:
         return HFBackboneWrapper("google/vivit-b-16x2-kinetics400", device=device)
     if name in {"vjepa2", "facebook/vjepa2-vitl-fpc64-256"}:
         return HFBackboneWrapper("facebook/vjepa2-vitl-fpc64-256", device=device)
+    if name in {"facebook/vjepa2-vitg-fpc32-384-diving48"}:
+        return HFBackboneWrapper("facebook/vjepa2-vitg-fpc32-384-diving48", device=device)
+    if name in {"facebook/vjepa2-vitg-fpc64-384-ssv2"}:
+        return HFBackboneWrapper("facebook/vjepa2-vitg-fpc64-384-ssv2", device=device)
     return IdentityBackbone()
