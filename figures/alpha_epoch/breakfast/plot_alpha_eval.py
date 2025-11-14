@@ -96,3 +96,4 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 # python3 plot_alpha_eval.py --csv epoch.csv --out breakfast.png --linewidth 3.5
+# python3 plot_alpha_eval.py --csv hmdb51.csv --out hmdb51.png --linewidth 3.5
