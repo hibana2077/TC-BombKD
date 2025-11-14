@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--csv", type=Path, default=Path("epoch.csv"), help="Path to CSV file")
     p.add_argument("--font-size", type=float, default=11.0, help="Base font size for labels and ticks")
     p.add_argument("--legend-fontsize", type=float, default=10.0, help="Legend font size")
+    p.add_argument("--legend-alpha", type=float, default=0.85, help="Legend transparency (0.0-1.0)")
     p.add_argument("--linewidth", type=float, default=1.5, help="Line width for plot lines")
     p.add_argument("--out", type=Path, default=None, help="If set, save the figure to this path instead of showing")
     p.add_argument("--show", action="store_true", help="Show the figure interactively (if not saving)")
@@ -84,7 +85,7 @@ def main() -> None:
     # Combine legends from both axes
     all_lines = left_lines + right_lines
     labels = [l.get_label() for l in all_lines]
-    legend = ax_left.legend(all_lines, labels, fontsize=args.legend_fontsize, loc="best", frameon=True, framealpha=0.85)
+    legend = ax_left.legend(all_lines, labels, fontsize=args.legend_fontsize, loc="best", frameon=True, framealpha=args.legend_alpha)
 
     fig.tight_layout()
 
