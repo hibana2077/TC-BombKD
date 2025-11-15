@@ -208,16 +208,20 @@ class HFBackboneWrapper(FeatureBackbone):
 
 def build_backbone(name: str, device: Optional[str] = None) -> FeatureBackbone:
     name = name.lower()
-    if name in {"timesformer", "facebook/timesformer-base-finetuned-ssv2"}:
-        return HFBackboneWrapper("facebook/timesformer-base-finetuned-ssv2", device=device)
-    if name in {"videomae", "mcg-nju/videomae-base-finetuned-kinetics"}:
-        return HFBackboneWrapper("MCG-NJU/videomae-base-finetuned-kinetics", device=device)
-    if name in {"vivit", "google/vivit-b-16x2-kinetics400"}:
+    if name in {"timesformerG", "facebook/timesformer-hr-finetuned-k600"}: # accept 16, 32, 64, 96
+        return HFBackboneWrapper("facebook/timesformer-hr-finetuned-k600", device=device)
+    if name in {"timesformerSsv2", "facebook/timesformer-hr-finetuned-ssv2"}: # accept 16, 32, 64
+        return HFBackboneWrapper("facebook/timesformer-hr-finetuned-ssv2", device=device)
+    if name in {"videomaeG", "mcg-nju/videomae-huge-finetuned-kinetics"}: # accept 16, 32, 64
+        return HFBackboneWrapper("MCG-NJU/videomae-huge-finetuned-kinetics", device=device)
+    if name in {"videomaeSsv2", "mcg-nju/videomae-base-ssv2"}: # accept 16, 32, 64
+        return HFBackboneWrapper("MCG-NJU/videomae-base-ssv2", device=device)
+    if name in {"vivit", "google/vivit-b-16x2-kinetics400"}: # accept 32
         return HFBackboneWrapper("google/vivit-b-16x2-kinetics400", device=device)
-    if name in {"vjepa2Div","facebook/vjepa2-vitg-fpc32-384-diving48"}:
+    if name in {"vjepa2Div","facebook/vjepa2-vitg-fpc32-384-diving48"}: # accept 32
         return HFBackboneWrapper("facebook/vjepa2-vitg-fpc32-384-diving48", device=device)
-    if name in {"vjepa2Ssv2","facebook/vjepa2-vitg-fpc64-384-ssv2"}:
+    if name in {"vjepa2Ssv2","facebook/vjepa2-vitg-fpc64-384-ssv2"}: # accept 64
         return HFBackboneWrapper("facebook/vjepa2-vitg-fpc64-384-ssv2", device=device)
-    if name in {"vjepa2", "facebook/vjepa2-vitg-fpc64-384"}:
+    if name in {"vjepa2G", "facebook/vjepa2-vitg-fpc64-384"}: # accept 64
         return HFBackboneWrapper("facebook/vjepa2-vitg-fpc64-384", device=device)
     return IdentityBackbone()

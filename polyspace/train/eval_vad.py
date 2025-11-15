@@ -1,12 +1,6 @@
-"""Evaluate VAD anomaly detection on ShanghaiTech (or similar) using trained VAD checkpoint.
+"""Evaluate VAD anomaly detection using trained VAD checkpoint (feature-only).
 
-Procedure:
- 1. Load cached features (student feats) or raw videos.
- 2. Reconstruct translators + fusion + projection head from checkpoint.
- 3. Compute anomaly score s(V) = ||P(Z0)-P(Zfused)||^2.
- 4. If test_frame_mask available (ShanghaiTech), aggregate frame masks to video-level
-    label and compute AUC over scores.
- 5. Optionally save per-video scores to JSON.
+This script now only consumes pre-extracted features. Raw video mode removed.
 """
 
 import os
@@ -18,29 +12,14 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 import numpy as np
 
-from ..data.datasets import ShanghaiTechVADDataset, collate_fn
-from ..models.backbones import build_backbone
+from ..train.utils.feature_loader import build_feature_dataloader
 from ..models.converters import build_converter
 from ..models.fusion_head import ResidualGatedFusion
 from ..models.vad_head import ProjectionHead, anomaly_score
 from .utils import FeaturePairs, ShardAwareSampler
 
 
-class EvalVADFeatureDataset(Dataset):
-    def __init__(self, feat_path: str):
-        # No teacher keys needed; only student features required.
-        self._pairs = FeaturePairs(feat_path, teacher_keys=[])
-
-    def __len__(self):
-        return len(self._pairs)
-
-    def __getitem__(self, idx: int):
-        rec = self._pairs[idx]
-        return {
-            "student_feat": rec["x"],
-            "label": rec.get("label", 0),
-            "path": rec.get("path", str(idx)),
-        }
+    # Dataset/collate is centralized in utils.feature_loader
 
 
 def eval_vad(
@@ -60,25 +39,17 @@ def eval_vad(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_name = dataset.lower()
 
-    if use_cached_features:
-        feat_path = cached_features_path or root
-        ds = EvalVADFeatureDataset(feat_path)
-        sampler = ShardAwareSampler(ds._pairs, within_shard_shuffle=False)
-        dl = DataLoader(ds, batch_size=batch_size, sampler=sampler, num_workers=0, collate_fn=lambda b: {
-            "student_feat": torch.stack([x["student_feat"] for x in b], dim=0),
-            "label": torch.tensor([x["label"] for x in b], dtype=torch.long),
-            "path": [x["path"] for x in b],
-        })
-        feat_dim = ds[0]["student_feat"].shape[-1]
-        student_model = None
-    else:
-        if data_name in {"shanghaitech", "stech", "shtech"}:
-            ds = ShanghaiTechVADDataset(root, split=split, num_frames=num_frames)
-        else:
-            raise ValueError("Raw video eval currently only implemented for ShanghaiTech")
-        dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=2, collate_fn=collate_fn)
-        student_model = build_backbone("vjepa2").to(device).eval()
-        feat_dim = getattr(student_model, "feat_dim", 768)
+    # Feature-only dataloader
+    feat_path = cached_features_path or root
+    dl, ds, _ = build_feature_dataloader(
+        features_path=feat_path,
+        teacher_keys=[],
+        batch_size=batch_size,
+        num_workers=0,
+        shard_shuffle=False,
+        pin_memory=torch.cuda.is_available(),
+    )
+    feat_dim = ds[0]["student_feat"].shape[-1]
 
     # Load checkpoint
     ck = torch.load(ckpt, map_location="cpu")
@@ -139,13 +110,9 @@ def eval_vad(
     first_debug_batch = True
     with torch.no_grad():
         for batch in tqdm(dl, desc="VAD Eval"):
-            if use_cached_features:
-                z0 = batch["student_feat"].to(device)
-                if features_fp16 and z0.dtype == torch.float16:
-                    z0 = z0.float()
-            else:
-                video = batch["video"].float().div(255.0).to(device)
-                z0 = student_model(video)["feat"]
+            z0 = batch["student_feat"].to(device)
+            if features_fp16 and z0.dtype == torch.float16:
+                z0 = z0.float()
             y = batch["label"].to(device)
             z_hats = [translators[i](z0) for i in range(len(translators))]
             fout = fusion(z0, z_hats)
