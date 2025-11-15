@@ -8,6 +8,7 @@ from bisect import bisect_right
 
 import torch
 from torch.utils.data import Dataset, Sampler
+import numpy as np
 
 
 class FeaturePairs(Dataset):
@@ -40,6 +41,8 @@ class FeaturePairs(Dataset):
         # cache one shard at a time to keep RAM low
         self._cache_shard_path: Optional[str] = None
         self._cache_records: Optional[List[Dict]] = None
+        # cache for npy_dir shards
+        self._cache_npy: Optional[Dict[str, object]] = None  # holds numpy arrays
 
         path = feat_json
         if os.path.isdir(path):
@@ -119,14 +122,29 @@ class FeaturePairs(Dataset):
         return int(self._num_samples)
 
     def _load_shard(self, shard_rel_path: str) -> None:
-        """Load a shard file into the local cache if not already loaded."""
+        """Load a shard (directory or file) into the local cache if not already loaded."""
         shard_path = shard_rel_path
         if self._base_dir is not None:
             shard_path = os.path.join(self._base_dir, shard_rel_path)
-        if self._cache_shard_path == shard_path and self._cache_records is not None:
+        if self._cache_shard_path == shard_path and (self._cache_records is not None or self._cache_npy is not None):
             return
-        with open(shard_path, 'rb') as f:
-            self._cache_records = pickle.load(f)
+        # Reset caches
+        self._cache_records = None
+        self._cache_npy = None
+        if os.path.isdir(shard_path):
+            # npy_dir storage — memory-map arrays for efficiency
+            data: Dict[str, object] = {}
+            data["student_concat"] = np.load(os.path.join(shard_path, "student_concat.npy"), mmap_mode='r')
+            data["student_offs"] = np.load(os.path.join(shard_path, "student_offs.npy"), mmap_mode='r')
+            data["labels"] = np.load(os.path.join(shard_path, "labels.npy"), mmap_mode='r')
+            # paths saved as unicode .npy; mmap not required but OK
+            data["paths"] = np.load(os.path.join(shard_path, "paths.npy"), allow_pickle=False)
+            # Load teacher arrays lazily on demand in __getitem__
+            self._cache_npy = data
+        else:
+            # pickle file
+            with open(shard_path, 'rb') as f:
+                self._cache_records = pickle.load(f)
         self._cache_shard_path = shard_path
 
     def _get_index_shard(self, idx: int) -> Dict:
@@ -154,13 +172,41 @@ class FeaturePairs(Dataset):
             sh = self._get_index_shard(idx)
             local_idx = idx - int(sh["start"])  # type: ignore[index]
             self._load_shard(sh["file"])  # type: ignore[index]
-            assert self._cache_records is not None
-            rec = self._cache_records[local_idx]
+            if self._cache_npy is not None:
+                # npy_dir mode
+                sc = self._cache_npy["student_concat"]  # type: ignore[index]
+                so = self._cache_npy["student_offs"]  # type: ignore[index]
+                lb = self._cache_npy["labels"]  # type: ignore[index]
+                pa = self._cache_npy["paths"]  # type: ignore[index]
+                start = int(so[local_idx])
+                end = int(so[local_idx + 1])
+                stu_np = sc[start:end]
+                out = {"x": torch.from_numpy(stu_np)}
+                # Teachers
+                for k in self.teacher_keys:
+                    safe_key = k.replace("/", "_")
+                    concat_path = os.path.join(self._cache_shard_path, f"{safe_key}_concat.npy")  # type: ignore[arg-type]
+                    offs_path = os.path.join(self._cache_shard_path, f"{safe_key}_offs.npy")  # type: ignore[arg-type]
+                    if not os.path.exists(concat_path) or not os.path.exists(offs_path):
+                        raise KeyError(f"Teacher key '{k}' missing in shard for index {idx}")
+                    tc = np.load(concat_path, mmap_mode='r')
+                    to = np.load(offs_path, mmap_mode='r')
+                    ts = int(to[local_idx])
+                    te = int(to[local_idx + 1])
+                    out[k] = torch.from_numpy(tc[ts:te])
+                # label and path
+                out["label"] = int(lb[local_idx])
+                out["path"] = str(pa[local_idx])
+                return out
+            else:
+                # pickle shard mode
+                assert self._cache_records is not None
+                rec = self._cache_records[local_idx]
         else:
             # legacy fully loaded modes
             rec = self._records[idx]  # type: ignore[attr-defined]
 
-        # Preserve dtype and avoid extra copies when underlying storage is numpy
+        # Legacy record dict path (pkl/json)
         stu = rec["student"]
         if hasattr(stu, "__array__"):
             x = torch.from_numpy(stu)  # type: ignore[arg-type]
@@ -175,15 +221,10 @@ class FeaturePairs(Dataset):
                 out[k] = torch.from_numpy(val)  # type: ignore[arg-type]
             else:
                 out[k] = torch.as_tensor(val)
-        
-        # Include label if present in the record (for fusion training)
         if "label" in rec:
             out["label"] = int(rec["label"]) if not isinstance(rec["label"], int) else rec["label"]
-        
-        # Include path if present (for debugging/tracking)
         if "path" in rec:
             out["path"] = rec["path"]
-            
         return out
 
 

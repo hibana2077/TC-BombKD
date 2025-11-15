@@ -1,7 +1,7 @@
 import os
 import json
 import pickle
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 
 import torch
 from torch.utils.data import DataLoader
@@ -51,6 +51,7 @@ def extract_features(
     num_frames: int = 16,
     use_tqdm: bool = True,
     shard_size: int = 0,
+    storage: str = "npy_dir",
     fp16: bool = False,
 ) -> None:
     os.makedirs(out_dir, exist_ok=True)
@@ -122,7 +123,7 @@ def extract_features(
 
     # Sharded streaming write to avoid high RAM usage
     base = f"features_{dataset_name}_{split}"
-    shard_tpl = base + "_shard_{:05d}.pkl"
+    shard_tpl = base + "_shard_{:05d}"
     index_path = os.path.join(out_dir, base + ".index.json")
 
     index: Dict[str, Any] = {
@@ -136,9 +137,47 @@ def extract_features(
         "batch_size": batch_size,
         "num_workers": num_workers,
         "shard_size": shard_size,
+        "storage": storage,
         "num_samples": 0,
         "shards": [],  # list of {file, start, count}
     }
+
+    def _write_shard_dir(shard_dir: str, records: List[Dict[str, Any]]) -> None:
+        os.makedirs(shard_dir, exist_ok=True)
+        # student feats (ragged)
+        feats: List[np.ndarray] = [r["student"] for r in records]
+        # Cast dtype
+        feats = [f.astype(np.float16 if fp16 else np.float32, copy=False) for f in feats]
+        lengths = [f.shape[0] for f in feats]
+        D = feats[0].shape[1] if feats else 0
+        offs = np.zeros(len(feats) + 1, dtype=np.int64)
+        if lengths:
+            offs[1:] = np.cumsum(lengths, dtype=np.int64)
+        concat = np.concatenate(feats, axis=0) if lengths and offs[-1] > 0 else np.zeros((0, D), dtype=feats[0].dtype if feats else (np.float16 if fp16 else np.float32))
+        np.save(os.path.join(shard_dir, "student_concat.npy"), concat)
+        np.save(os.path.join(shard_dir, "student_offs.npy"), offs)
+        # labels and paths
+        labels = np.asarray([int(r.get("label", -1)) for r in records], dtype=np.int64)
+        paths = np.asarray([str(r.get("path", "")) for r in records], dtype=np.str_)
+        np.save(os.path.join(shard_dir, "labels.npy"), labels)
+        np.save(os.path.join(shard_dir, "paths.npy"), paths)
+
+    def _append_teacher_to_shard_dir(shard_dir: str, tname: str, tfeats: List[np.ndarray]) -> None:
+        # ensure order matches existing sample count
+        offs_path = os.path.join(shard_dir, "student_offs.npy")
+        offs = np.load(offs_path)
+        nsamples = offs.shape[0] - 1
+        assert len(tfeats) == nsamples, f"Teacher shard size mismatch: {len(tfeats)} vs {nsamples}"
+        tfeats = [f.astype(np.float16 if fp16 else np.float32, copy=False) for f in tfeats]
+        tlens = [f.shape[0] for f in tfeats]
+        tD = tfeats[0].shape[1] if tfeats else 0
+        toffs = np.zeros(len(tfeats) + 1, dtype=np.int64)
+        if tlens:
+            toffs[1:] = np.cumsum(tlens, dtype=np.int64)
+        tconcat = np.concatenate(tfeats, axis=0) if tlens and toffs[-1] > 0 else np.zeros((0, tD), dtype=tfeats[0].dtype if tfeats else (np.float16 if fp16 else np.float32))
+        safe_key = tname.replace("/", "_")
+        np.save(os.path.join(shard_dir, f"{safe_key}_concat.npy"), tconcat)
+        np.save(os.path.join(shard_dir, f"{safe_key}_offs.npy"), toffs)
 
     # Pass 1: write student shards
     student = build_backbone(student_name).eval().to(device)
@@ -163,18 +202,26 @@ def extract_features(
             # flush if shard full
             if len(buffer) >= shard_size:
                 shard_name = shard_tpl.format(shard_id)
-                shard_file = os.path.join(out_dir, shard_name)
-                with open(shard_file, "wb") as f:
-                    pickle.dump(buffer, f)
+                if storage == "pkl":
+                    shard_file = os.path.join(out_dir, shard_name + ".pkl")
+                    with open(shard_file, "wb") as f:
+                        pickle.dump(buffer, f)
+                else:
+                    shard_dir = os.path.join(out_dir, shard_name)
+                    _write_shard_dir(shard_dir, buffer)
                 index["shards"].append({"file": shard_name, "start": seen - len(buffer), "count": len(buffer)})
                 buffer = []
                 shard_id += 1
     # flush tail
     if buffer:
         shard_name = shard_tpl.format(shard_id)
-        shard_file = os.path.join(out_dir, shard_name)
-        with open(shard_file, "wb") as f:
-            pickle.dump(buffer, f)
+        if storage == "pkl":
+            shard_file = os.path.join(out_dir, shard_name + ".pkl")
+            with open(shard_file, "wb") as f:
+                pickle.dump(buffer, f)
+        else:
+            shard_dir = os.path.join(out_dir, shard_name)
+            _write_shard_dir(shard_dir, buffer)
         index["shards"].append({"file": shard_name, "start": seen - len(buffer), "count": len(buffer)})
         buffer = []
         shard_id += 1
@@ -211,15 +258,20 @@ def extract_features(
                 for i in range(tfeat.shape[0]):
                     tfeat_list.append(to_storage_array(tfeat[i]))
 
-            # Load shard, update, and rewrite
-            shard_file = os.path.join(out_dir, shard_info["file"])
-            with open(shard_file, "rb") as f:
-                records = pickle.load(f)
-            assert len(records) == len(tfeat_list), "Shard size mismatch during teacher update"
-            for i in range(len(records)):
-                records[i][tname] = tfeat_list[i]
-            with open(shard_file, "wb") as f:
-                pickle.dump(records, f)
+            # Update shard depending on storage
+            shard_name = shard_info["file"]
+            if storage == "pkl":
+                shard_file = os.path.join(out_dir, shard_name + ".pkl")
+                with open(shard_file, "rb") as f:
+                    records = pickle.load(f)
+                assert len(records) == len(tfeat_list), "Shard size mismatch during teacher update"
+                for i in range(len(records)):
+                    records[i][tname] = tfeat_list[i]
+                with open(shard_file, "wb") as f:
+                    pickle.dump(records, f)
+            else:
+                shard_dir = os.path.join(out_dir, shard_name)
+                _append_teacher_to_shard_dir(shard_dir, tname, tfeat_list)
 
         # Move teacher off GPU
         teacher.to("cpu")
@@ -250,7 +302,8 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--frames", type=int, default=16)
     parser.add_argument("--no_tqdm", action="store_true", help="Disable tqdm progress bar")
-    parser.add_argument("--shard_size", type=int, default=0, help="If >0, write sharded PKL files of this many samples to reduce RAM usage")
+    parser.add_argument("--shard_size", type=int, default=0, help="If >0, write sharded feature files of this many samples to reduce RAM usage")
+    parser.add_argument("--storage", type=str, default="npy_dir", choices=["npy_dir", "pkl"], help="Shard storage format: per-shard directory of .npy files (npy_dir) or pickle list (pkl)")
     parser.add_argument("--fp16", action="store_true", help="Store features in float16 to reduce disk/RAM")
     args = parser.parse_args()
     extract_features(
@@ -265,5 +318,6 @@ if __name__ == "__main__":
         num_frames=args.frames,
         use_tqdm=not args.no_tqdm,
         shard_size=args.shard_size,
+        storage=args.storage,
         fp16=args.fp16,
     )

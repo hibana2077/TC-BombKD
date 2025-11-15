@@ -5,7 +5,8 @@ training and evaluation, removing any dependency on raw video decoding.
 
 All loaders operate on datasets extracted by `polyspace.data.featurize` and
 stored as single PKL/JSON, directory of shard PKLs, or an index JSON
-(`*.index.json`).
+(`*.index.json`). New format supported: per-shard directories containing
+`.npy` arrays with ragged offsets ("npy_dir"), addressed via the index JSON.
 """
 from typing import Dict, List, Optional, Tuple
 
