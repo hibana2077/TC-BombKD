@@ -3,8 +3,8 @@
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
-#PBS -l mem=24GB
-#PBS -l walltime=02:30:00
+#PBS -l mem=64GB
+#PBS -l walltime=12:30:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -18,7 +18,7 @@ cd ../..
 python3 -m polyspace.train.train_converter \
 	--features ./features/features_breakfast_train.index.json \
 	--teachers videomae timesformer vivit \
-	--d_in 1024 --d_out 768 \
+	--d_in 1408 --d_out 768 \
 	--kind c \
 	--epochs 10 \
 	--batch 32 \
