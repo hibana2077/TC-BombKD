@@ -181,7 +181,8 @@ class FeaturePairs(Dataset):
                 start = int(so[local_idx])
                 end = int(so[local_idx + 1])
                 stu_np = sc[start:end]
-                out = {"x": torch.from_numpy(stu_np)}
+                # Ensure writable, contiguous numpy array before torch conversion
+                out = {"x": torch.from_numpy(np.array(stu_np, copy=True))}
                 # Teachers
                 for k in self.teacher_keys:
                     safe_key = k.replace("/", "_")
@@ -193,7 +194,8 @@ class FeaturePairs(Dataset):
                     to = np.load(offs_path, mmap_mode='r')
                     ts = int(to[local_idx])
                     te = int(to[local_idx + 1])
-                    out[k] = torch.from_numpy(tc[ts:te])
+                    # Slice of memmap can be read-only; copy to make it writable
+                    out[k] = torch.from_numpy(np.array(tc[ts:te], copy=True))
                 # label and path
                 out["label"] = int(lb[local_idx])
                 out["path"] = str(pa[local_idx])
@@ -209,7 +211,8 @@ class FeaturePairs(Dataset):
         # Legacy record dict path (pkl/json)
         stu = rec["student"]
         if hasattr(stu, "__array__"):
-            x = torch.from_numpy(stu)  # type: ignore[arg-type]
+            # Copy to ensure numpy provides a writable buffer to PyTorch
+            x = torch.from_numpy(np.array(stu, copy=True))  # type: ignore[arg-type]
         else:
             x = torch.as_tensor(stu)
         out = {"x": x}
@@ -218,7 +221,7 @@ class FeaturePairs(Dataset):
                 raise KeyError(f"Teacher key '{k}' missing in record {idx}")
             val = rec[k]
             if hasattr(val, "__array__"):
-                out[k] = torch.from_numpy(val)  # type: ignore[arg-type]
+                out[k] = torch.from_numpy(np.array(val, copy=True))  # type: ignore[arg-type]
             else:
                 out[k] = torch.as_tensor(val)
         if "label" in rec:
