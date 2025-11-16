@@ -441,6 +441,14 @@ def main():
     parser.add_argument("--no-stats", action="store_true", help="Skip computing stats for speed")
     parser.add_argument("--sample", type=int, default=3, help="Show N sample records")
     parser.add_argument("--json_out", type=str, default=None, help="Optional path to save summary JSON")
+    # As requested: flag name spelled as 'anormaly'; also provide a correct alias for convenience
+    parser.add_argument(
+        "--report-anormaly",
+        "--report-anomaly",
+        dest="report_anormaly",
+        action="store_true",
+        help="If set, when label -1 count > 0, report original video paths",
+    )
 
     args = parser.parse_args()
 
@@ -453,6 +461,50 @@ def main():
 
     summary = summarize_features(meta, limit=args.limit, keys_filter=args.keys, compute_stats=not args.no_stats)
     print_report(summary, meta, sample=args.sample)
+
+    # Report anomaly paths when requested
+    if getattr(args, "report_anormaly", False):
+        lkey = summary.get("label_key")
+        lcnt = summary.get("label_counts") or {}
+        # labels in summary are converted to hashable ints/floats/str; check both -1 and "-1" just in case
+        neg1_count = lcnt.get(-1, lcnt.get("-1", 0))
+        if neg1_count and neg1_count > 0 and lkey is not None:
+            def to_hashable(v: Any) -> Any:
+                import numpy as _np
+                if isinstance(v, (_np.integer,)):
+                    return int(v)
+                if isinstance(v, (_np.floating,)):
+                    ival = int(v)
+                    return ival if float(ival) == float(v) else float(v)
+                return v
+
+            anomaly_paths = []
+            for rec in meta:
+                if lkey in rec:
+                    lv = rec[lkey]
+                    # handle numpy 0-d arrays
+                    if isinstance(lv, np.ndarray) and lv.ndim == 0:
+                        lv = lv.item()
+                    if to_hashable(lv) == -1 or str(to_hashable(lv)) == "-1":
+                        # prefer 'path' key; fall back to any plausible path-like keys
+                        p = rec.get("path") or rec.get("video") or rec.get("file") or rec.get("source")
+                        if p is not None:
+                            anomaly_paths.append(str(p))
+            # Deduplicate while preserving order
+            seen = set()
+            uniq_paths = []
+            for p in anomaly_paths:
+                if p not in seen:
+                    seen.add(p)
+                    uniq_paths.append(p)
+            print()
+            print(f"Anomaly report: found {neg1_count} record(s) with label -1.")
+            if uniq_paths:
+                print("Original video path(s) with label -1:")
+                for p in uniq_paths:
+                    print(f"  - {p}")
+            else:
+                print("No path metadata available for anomalous records.")
 
     if args.json_out:
         out = {

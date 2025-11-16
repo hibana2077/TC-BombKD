@@ -17,4 +17,4 @@ export HF_HUB_OFFLINE=1
 cd ../..
 # 備註：若不加 --shard_size 仍可輸出單一 pkl；為避免記憶體爆炸，建議啟用分片與 fp16。
 # 產出：features_ssv2_train.index.json + 多個 features_ssv2_train_shard_XXXXX.pkl
-python3 -m polyspace.train.inspect_features --features ./features/breakfast/features_breakfast_test.index.json --limit 0 --sample 3 >> B000IT.log 2>&1
+python3 -m polyspace.train.inspect_features --features ./features/breakfast/features_breakfast_test.index.json --limit 0 --sample 3 --report-anormaly >> B000ITT.log 2>&1
