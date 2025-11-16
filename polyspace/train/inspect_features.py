@@ -157,14 +157,62 @@ def load_meta(path: str, limit: int = 0) -> List[Dict[str, Any]]:
             idx = json.load(f)
         base_dir = os.path.dirname(path)
         metas: List[Dict[str, Any]] = []
-        for sh in idx.get('shards', []):
-            fp = os.path.join(base_dir, sh['file'])
-            with open(fp, 'rb') as f:
-                part = pickle.load(f)
-            metas.extend(part)
-            if limit and len(metas) >= limit:
-                return metas[:limit]
-        return metas
+        storage = idx.get('storage', 'pkl')
+        if storage == 'pkl':
+            for sh in idx.get('shards', []):
+                shard_ref = sh.get('file')
+                fp = os.path.join(base_dir, shard_ref)
+                # Allow index to omit .pkl extension
+                if not os.path.isfile(fp) and os.path.isfile(fp + '.pkl'):
+                    fp = fp + '.pkl'
+                if not os.path.isfile(fp):
+                    raise FileNotFoundError(f"Shard file not found: {fp}")
+                with open(fp, 'rb') as f:
+                    part = pickle.load(f)
+                metas.extend(part)
+                if limit and len(metas) >= limit:
+                    return metas[:limit]
+            return metas
+        elif storage == 'npy_dir':
+            # Reconstruct records from concatenated arrays & offsets
+            teachers: List[str] = idx.get('teachers', [])
+            dtype = np.float16 if idx.get('dtype') == 'float16' else np.float32
+            for sh in idx.get('shards', []):
+                shard_ref = sh.get('file')
+                shard_dir = os.path.join(base_dir, shard_ref)
+                if not os.path.isdir(shard_dir):
+                    raise FileNotFoundError(f"Shard directory not found: {shard_dir}")
+                # Load student arrays
+                student_concat = np.load(os.path.join(shard_dir, 'student_concat.npy'))
+                student_offs = np.load(os.path.join(shard_dir, 'student_offs.npy'))
+                labels = np.load(os.path.join(shard_dir, 'labels.npy'))
+                paths = np.load(os.path.join(shard_dir, 'paths.npy'))
+                # Load teacher arrays (concat + offs per teacher)
+                teacher_data = {}
+                teacher_offs_map = {}
+                for tname in teachers:
+                    safe_key = tname.replace('/', '_')
+                    concat_path = os.path.join(shard_dir, f'{safe_key}_concat.npy')
+                    offs_path = os.path.join(shard_dir, f'{safe_key}_offs.npy')
+                    if os.path.isfile(concat_path) and os.path.isfile(offs_path):
+                        teacher_data[tname] = np.load(concat_path)
+                        teacher_offs_map[tname] = np.load(offs_path)
+                nsamples = len(paths)
+                for i in range(nsamples):
+                    rec: Dict[str, Any] = {
+                        'path': str(paths[i]),
+                        'label': int(labels[i]),
+                        'student': student_concat[student_offs[i]: student_offs[i+1]].astype(dtype, copy=False),
+                    }
+                    for tname, tconcat in teacher_data.items():
+                        toffs = teacher_offs_map[tname]
+                        rec[tname] = tconcat[toffs[i]: toffs[i+1]].astype(dtype, copy=False)
+                    metas.append(rec)
+                    if limit and len(metas) >= limit:
+                        return metas[:limit]
+            return metas
+        else:
+            raise ValueError(f"Unsupported storage type in index: {storage}")
     # Single files
     if path.lower().endswith(".pkl"):
         with open(path, "rb") as f:
