@@ -17,7 +17,7 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.train_fusion \
     --dataset breakfast \
-    --root ./features/features_breakfast_train.index.json \
+    --features ./features/features_breakfast_train.index.json \
     --split train \
     --student vjepa2div \
 	--teachers videomaessv2 timesformerssv2 vivit \
