@@ -16,18 +16,12 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 python3 -m polyspace.train.train_fusion \
-    --dataset diving48 \
-    --root ./features/features_diving48_train.index.json \
-    --split train \
-    --student vjepa2 \
-    --teachers videomae timesformer vivit \
+    --features ./features/diving48/features_diving48_train.index.json \
+    --teachers videomaessv2 timesformerssv2 vivit \
     --converters ./checkpoints/D001/converters_ep10.pt \
     --classes 48 \
-    --frames 32 \
     --batch 8 \
     --epochs 50 \
     --lr 3e-4 \
-    --use_cached_features \
     --features_fp16 \
-    --advance-cls-head \
     --save_dir ./checkpoints/D002 >> D002.log 2>&1

@@ -17,7 +17,7 @@ export HF_HUB_OFFLINE=1
 cd ../..
 python3 -m polyspace.train.train_converter \
 	--features ./features/diving48/features_diving48_train.index.json \
-	--teachers videomaes timesformerssv2 vivit \
+	--teachers videomaessv2 timesformerssv2 vivit \
 	--d_in 1408 --d_out 768 \
 	--kind c \
 	--epochs 10 \
