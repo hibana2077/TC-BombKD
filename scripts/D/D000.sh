@@ -1,9 +1,9 @@
 #!/bin/bash
 #PBS -P kf09
-#PBS -q gpuvolta
+#PBS -q dgxa100
 #PBS -l ngpus=1
-#PBS -l ncpus=12
-#PBS -l mem=32GB
+#PBS -l ncpus=16
+#PBS -l mem=64GB
 #PBS -l walltime=24:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
@@ -15,19 +15,19 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
-# 備註：若不加 --shard_size 仍可輸出單一 pkl；為避免記憶體爆炸，建議啟用分片與 fp16。
-# 產出：features_ssv2_train.index.json + 多個 features_ssv2_train_shard_XXXXX.pkl
 python3 -m polyspace.data.featurize \
-	--dataset diving48 \
-	--root ./datasets/Diving48 \
-	--split train \
-	--out ./features \
-	--student vjepa2 \
-	--teachers videomae timesformer vivit \
-	--batch 2 \
-	--workers 2 \
-	--frames 32 \
-	--shard_size 512 \
-	--fp16 \
-	--no_tqdm \
-	>> D000.log 2>&1
+  --dataset diving48 \
+  --root ./datasets/Diving48 \
+  --split train \
+  --out ./features/diving48 \
+  --student vjepa2div \
+  --teachers vivit videomaessv2 timesformerssv2 \
+  --batch 2 \
+  --workers 2 \
+  --student_frames 32 \
+  --teacher_frames 32 16 16 \
+  --shard_size 512 \
+  --storage npy_dir \
+  --fp16 \
+  --no_tqdm \
+  >> D000.log 2>&1

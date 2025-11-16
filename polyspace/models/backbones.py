@@ -210,11 +210,11 @@ def build_backbone(name: str, device: Optional[str] = None) -> FeatureBackbone:
     key = name.strip().lower()
     if key in {"timesformerg", "facebook/timesformer-hr-finetuned-k600", "timesformer", "timesformer-k600"}: # accept 16, 32, 64, 96
         return HFBackboneWrapper("facebook/timesformer-hr-finetuned-k600", device=device)
-    if key in {"timesformerssv2", "facebook/timesformer-hr-finetuned-ssv2", "timesformer-ssv2"}: # accept 16, 32, 64
+    if key in {"timesformerssv2", "facebook/timesformer-hr-finetuned-ssv2", "timesformer-ssv2"}: # accept 16, 32, 64, 96
         return HFBackboneWrapper("facebook/timesformer-hr-finetuned-ssv2", device=device)
-    if key in {"videomaeg", "mcg-nju/videomae-huge-finetuned-kinetics", "videomae-g", "videomae-kinetics"}: # accept 16, 32, 64
+    if key in {"videomaeg", "mcg-nju/videomae-huge-finetuned-kinetics", "videomae-g", "videomae-kinetics"}: # accept 16
         return HFBackboneWrapper("MCG-NJU/videomae-huge-finetuned-kinetics", device=device)
-    if key in {"videomaessv2", "mcg-nju/videomae-base-ssv2", "videomae-ssv2"}: # accept 16, 32, 64
+    if key in {"videomaessv2", "mcg-nju/videomae-base-ssv2", "videomae-ssv2"}: # accept 16
         return HFBackboneWrapper("MCG-NJU/videomae-base-ssv2", device=device)
     if key in {"vivit", "google/vivit-b-16x2-kinetics400"}: # accept 32
         return HFBackboneWrapper("google/vivit-b-16x2-kinetics400", device=device)

@@ -1,7 +1,7 @@
 import os
 import json
 import pickle
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 
 import torch
 from torch.utils.data import DataLoader
@@ -49,13 +49,21 @@ def extract_features(
     batch_size: int = 2,
     num_workers: int = 2,
     num_frames: int = 16,
+    student_frames: Optional[int] = None,
+    teacher_frames: Optional[List[int]] = None,
     use_tqdm: bool = True,
     shard_size: int = 0,
     storage: str = "npy_dir",
     fp16: bool = False,
 ) -> None:
     os.makedirs(out_dir, exist_ok=True)
-    ds = build_dataset(dataset_name, dataset_root, split, num_frames)
+    # Resolve per-model frame counts
+    frames_student = int(student_frames) if student_frames is not None else int(num_frames)
+    if teacher_frames is not None and len(teacher_frames) != len(teacher_names):
+        raise ValueError("teacher_frames length must match teacher_names")
+    frames_teachers = [int(f) if f is not None else int(num_frames) for f in (teacher_frames or [num_frames] * len(teacher_names))]
+
+    ds = build_dataset(dataset_name, dataset_root, split, frames_student)
     dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -93,12 +101,16 @@ def extract_features(
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
-        # Subsequent passes: each teacher one by one
-        for tname in teacher_names:
+        # Subsequent passes: each teacher one by one (with its own frames)
+        for t_idx, tname in enumerate(teacher_names):
             if tname is None or str(tname).strip() == "":
                 continue
+            t_frames = frames_teachers[t_idx]
+            # Rebuild dataset/dataloader at the requested frame count to reduce decode cost
+            t_ds = build_dataset(dataset_name, dataset_root, split, t_frames)
+            t_dl = DataLoader(t_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
             teacher = build_backbone(tname).eval().to(device)
-            iterator = tqdm(dl, desc=f"Featurizing [{tname}]") if use_tqdm else dl
+            iterator = tqdm(t_dl, desc=f"Featurizing [{tname}] ({t_frames}f)") if use_tqdm else t_dl
             idx_global = 0
             for batch in iterator:
                 video = batch["video"].float().div(255.0).to(device)
@@ -134,6 +146,8 @@ def extract_features(
         "teachers": list(teacher_names),
         "dtype": "float16" if fp16 else "float32",
         "num_frames": num_frames,
+        "frames_student": frames_student,
+        "frames_teachers": {str(tn): int(frames_teachers[i]) for i, tn in enumerate(teacher_names)},
         "batch_size": batch_size,
         "num_workers": num_workers,
         "shard_size": shard_size,
@@ -181,7 +195,7 @@ def extract_features(
 
     # Pass 1: write student shards
     student = build_backbone(student_name).eval().to(device)
-    iterator = tqdm(dl, desc=f"Featurizing [{student_name}] -> shards", total=None) if use_tqdm else dl
+    iterator = tqdm(dl, desc=f"Featurizing [{student_name}] ({frames_student}f) -> shards", total=None) if use_tqdm else dl
     buffer: List[Dict[str, Any]] = []
     shard_id = 0
     seen = 0
@@ -234,19 +248,22 @@ def extract_features(
         torch.cuda.empty_cache()
 
     # Passes for teachers: process per shard using dataset subset to keep alignment and low memory
-    for tname in teacher_names:
+    for t_idx, tname in enumerate(teacher_names):
         if tname is None or str(tname).strip() == "":
             continue
+        t_frames = frames_teachers[t_idx]
         teacher = build_backbone(tname).eval().to(device)
         if use_tqdm:
-            print(f"Updating shards with teacher [{tname}] ...")
+            print(f"Updating shards with teacher [{tname}] ({t_frames}f) ...")
         # Iterate each shard range
         for shard_info in (tqdm(index["shards"], desc=f"{tname} shards") if use_tqdm else index["shards"]):
             start = shard_info["start"]
             count = shard_info["count"]
             end = start + count
+            # Build a fresh dataset at the requested frame count to stay efficient
+            t_ds = build_dataset(dataset_name, dataset_root, split, t_frames)
             sub_indices = list(range(start, end))
-            subset = Subset(ds, sub_indices)
+            subset = Subset(t_ds, sub_indices)
             sub_dl = DataLoader(subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
 
             # Collect teacher features for this shard sequentially
@@ -300,7 +317,9 @@ if __name__ == "__main__":
     parser.add_argument("--teachers", type=str, nargs="*", default=["videomae", "timesformer", "vivit"])
     parser.add_argument("--batch", type=int, default=2)
     parser.add_argument("--workers", type=int, default=2)
-    parser.add_argument("--frames", type=int, default=16)
+    parser.add_argument("--frames", type=int, default=16, help="Default frames for dataset decoding when per-model not set")
+    parser.add_argument("--student_frames", type=int, default=None, help="Frames for student backbone; overrides --frames for student")
+    parser.add_argument("--teacher_frames", type=int, nargs="*", default=None, help="Frames for each teacher backbone; overrides --frames for teachers; must match --teachers length")
     parser.add_argument("--no_tqdm", action="store_true", help="Disable tqdm progress bar")
     parser.add_argument("--shard_size", type=int, default=0, help="If >0, write sharded feature files of this many samples to reduce RAM usage")
     parser.add_argument("--storage", type=str, default="npy_dir", choices=["npy_dir", "pkl"], help="Shard storage format: per-shard directory of .npy files (npy_dir) or pickle list (pkl)")
@@ -320,4 +339,6 @@ if __name__ == "__main__":
         shard_size=args.shard_size,
         storage=args.storage,
         fp16=args.fp16,
+        student_frames=args.student_frames,
+        teacher_frames=args.teacher_frames,
     )
