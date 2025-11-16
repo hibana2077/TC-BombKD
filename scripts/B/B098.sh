@@ -16,7 +16,7 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 python3 -m polyspace.train.train_fusion \
-    --features ./features/features_breakfast_train.index.json \
+    --features ./features/breakfast/features_breakfast_train.index.json \
 	--teachers videomaessv2 timesformerssv2 vivit \
     --converters ./checkpoints/B097/converters_ep10.pt \
     --classes 10 \
