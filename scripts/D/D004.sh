@@ -1,10 +1,10 @@
 #!/bin/bash
-#PBS -P kf09
+#PBS -P rp06
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
-#PBS -l mem=24GB
-#PBS -l walltime=02:30:00
+#PBS -l mem=64GB
+#PBS -l walltime=24:30:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 

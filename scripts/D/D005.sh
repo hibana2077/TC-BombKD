@@ -1,5 +1,5 @@
 #!/bin/bash
-#PBS -P kf09
+#PBS -P rp06
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
@@ -19,37 +19,37 @@ python3 -m polyspace.train.train_converter \
 	--features ./features/diving48/features_diving48_train.index.json \
 	--teachers videomaessv2 timesformerssv2 vivit \
 	--d_in 1408 --d_out 768 \
-	--kind b \
+	--kind c \
 	--epochs 10 \
 	--batch 16 \
 	--workers 1 \
 	--log_every 20 \
 	--pin_memory \
-	--loss_l2 0.1 \
-	--loss_cos 0.1 \
-	--loss_nce 0.2 \
-	--loss_vic 0.05 \
-	--loss_bar 0.55 \
+	--loss_l2 0.0 \
+	--loss_cos 0.0 \
+	--loss_nce 0.0 \
+	--loss_vic 0.0 \
+	--loss_bar 1.0 \
 	--loss_l1 0.0 \
-	--save_dir ./checkpoints/D007/converter >> D007.log 2>&1
+	--save_dir ./checkpoints/D005/converter >> D005.log 2>&1
 
 python3 -m polyspace.train.train_fusion \
     --features ./features/diving48/features_diving48_train.index.json \
     --teachers videomaessv2 timesformerssv2 vivit \
-    --converters ./checkpoints/D007/converter/converters_ep10.pt \
+    --converters ./checkpoints/D005/converter/converters_ep10.pt \
     --classes 48 \
     --batch 8 \
     --epochs 50 \
     --lr 3e-4 \
     --features_fp16 \
-    --save_dir ./checkpoints/D007/fusion >> D007.log 2>&1
+    --save_dir ./checkpoints/D005/fusion >> D005.log 2>&1
 
 for ep in {1..50}; do
-  echo "checkpoint: ep$ep" >> D007E.log 2>&1
+  echo "checkpoint: ep$ep" >> D005E.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --features ./features/diving48/features_diving48_test.index.json \
     --teachers videomaessv2 timesformerssv2 vivit \
-    --converters ./checkpoints/D007/converter/converters_ep10.pt \
-    --fusion ./checkpoints/D007/fusion/fusion_ep$ep.pt \
-    --features_fp16 >> D007E.log 2>&1
+    --converters ./checkpoints/D005/converter/converters_ep10.pt \
+    --fusion ./checkpoints/D005/fusion/fusion_ep$ep.pt \
+    --features_fp16 >> D005E.log 2>&1
 done
