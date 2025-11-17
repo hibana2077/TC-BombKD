@@ -18,15 +18,11 @@ cd ../..
 for ep in {1..30}; do
   echo "checkpoint: ep$ep" >> B099.log 2>&1
   python3 -m polyspace.train.eval_downstream \
-    --dataset breakfast \
-    --root ./features \
+    --features ./features/breakfast/features_breakfast_test.index.json \
     --split test \
-    --student vjepa2 \
-    --teachers videomae timesformer vivit \
+    --teachers videomaessv2 timesformerssv2 vivit \
     --converters ./checkpoints/B097/converters_ep10.pt \
     --fusion ./checkpoints/B098/fusion_ep$ep.pt \
     --features_fp16 \
-    --use_cached_features \
-    --advance-cls-head \
-    --frames 16 >> B099.log 2>&1
+    --use_cached_features >> B099.log 2>&1
 done
