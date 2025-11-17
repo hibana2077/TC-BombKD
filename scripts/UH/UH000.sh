@@ -21,13 +21,15 @@ python3 -m polyspace.data.featurize \
 	--dataset uav \
 	--root ./datasets/uav \
 	--split train \
-	--out ./features \
-	--student vjepa2 \
-	--teachers videomae timesformer vivit \
+	--out ./features/uav/ \
+	--student vjepa2div \
+	--teachers vivit videomaeg timesformerg \
 	--batch 2 \
 	--workers 2 \
-	--frames 16 \
+	--student_frames 64 \
+	--teacher_frames 32 16 16 \
 	--shard_size 512 \
+	--storage npy_dir \
 	--fp16 \
 	--no_tqdm \
 	>> UH000.log 2>&1
