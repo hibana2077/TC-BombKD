@@ -15,6 +15,7 @@ export HF_HOME="/scratch/rp06/sl5952/TC-BombKD/.cache"
 export HF_HUB_OFFLINE=1
 
 cd ../..
+echo "Starting converter training..." >> D005.log 2>&1
 python3 -m polyspace.train.train_converter \
 	--features ./features/diving48/features_diving48_train.index.json \
 	--teachers videomaessv2 timesformerssv2 vivit \
@@ -33,6 +34,7 @@ python3 -m polyspace.train.train_converter \
 	--loss_l1 0.0 \
 	--save_dir ./checkpoints/D005/converter >> D005.log 2>&1
 
+echo "Starting fusion training..." >> D005.log 2>&1
 python3 -m polyspace.train.train_fusion \
     --features ./features/diving48/features_diving48_train.index.json \
     --teachers videomaessv2 timesformerssv2 vivit \
@@ -44,6 +46,7 @@ python3 -m polyspace.train.train_fusion \
     --features_fp16 \
     --save_dir ./checkpoints/D005/fusion >> D005.log 2>&1
 
+echo "Starting evaluation..." >> D005E.log 2>&1
 for ep in {1..50}; do
   echo "checkpoint: ep$ep" >> D005E.log 2>&1
   python3 -m polyspace.train.eval_downstream \

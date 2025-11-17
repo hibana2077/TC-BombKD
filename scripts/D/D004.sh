@@ -38,7 +38,7 @@ python3 -m polyspace.train.train_fusion \
     --teachers videomaessv2 timesformerssv2 vivit \
     --converters ./checkpoints/D004/converter/converters_ep10.pt \
     --classes 48 \
-    --batch 8 \
+    --batch 4 \
     --epochs 50 \
     --lr 3e-4 \
     --features_fp16 \
