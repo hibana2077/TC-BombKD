@@ -3,8 +3,8 @@
 #PBS -q gpuvolta
 #PBS -l ngpus=1
 #PBS -l ncpus=12
-#PBS -l mem=24GB
-#PBS -l walltime=02:30:00
+#PBS -l mem=50GB
+#PBS -l walltime=40:30:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -31,4 +31,25 @@ python3 -m polyspace.train.train_converter \
 	--loss_vic 0.0 \
 	--loss_bar 0.0 \
 	--loss_l1 0.0 \
-	--save_dir ./checkpoints/H001 >> H001.log 2>&1
+	--save_dir ./checkpoints/H001/converter >> H001.log 2>&1
+
+python3 -m polyspace.train.train_fusion \
+    --features ./features/hmdb51/features_hmdb51_train.index.json \
+    --teachers vivit videomaeg timesformerg \
+    --converters ./checkpoints/H001/converters_ep10.pt \
+    --classes 51 \
+    --batch 8 \
+    --epochs 50 \
+    --lr 3e-4 \
+    --features_fp16 \
+    --save_dir ./checkpoints/H001/fusion >> H001.log 2>&1
+
+for ep in {1..50}; do
+  echo "checkpoint: ep$ep" >> H003.log 2>&1
+  python3 -m polyspace.train.eval_downstream \
+    --features ./features/features_hmdb51_test.index.json \
+    --teachers vivit videomaeg timesformerg \
+    --converters ./checkpoints/H001/converter/converters_ep10.pt \
+    --fusion ./checkpoints/H001/fusion/fusion_ep$ep.pt \
+    --features_fp16 >> H001E.log 2>&1
+done
