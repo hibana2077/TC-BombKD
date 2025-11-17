@@ -22,7 +22,7 @@ python3 -m polyspace.train.train_converter \
 	--d_out_map "vivit=768,videomaeg=1280,timesformerg=768" \
 	--kind c \
 	--epochs 10 \
-	--batch 16 \
+	--batch 8 \
 	--workers 1 \
 	--log_every 20 \
 	--pin_memory \
