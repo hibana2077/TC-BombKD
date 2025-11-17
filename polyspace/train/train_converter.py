@@ -90,9 +90,22 @@ def train_converters(
     amp: Optional[bool] = None,
     shuffle: str = "auto",
     epoch_size: Optional[int] = None,
+    subsample_ratio: Optional[float] = None,
 ):
     os.makedirs(save_dir, exist_ok=True)
     ds = FeaturePairs(features_path, teacher_keys)
+    
+    # Apply subsample if requested (efficient: just take first N samples)
+    original_size = len(ds)
+    if subsample_ratio is not None:
+        if not (0 < subsample_ratio <= 1.0):
+            raise ValueError(f"subsample_ratio must be in (0, 1], got {subsample_ratio}")
+        subsample_size = max(1, int(original_size * subsample_ratio))
+        print(f"[Converter] Subsampling dataset: {subsample_size}/{original_size} samples ({subsample_ratio*100:.1f}%)")
+        # Efficient subsampling: use Subset to take first N samples
+        from torch.utils.data import Subset
+        ds = Subset(ds, range(subsample_size))
+    
     # Build an efficient sampling strategy to avoid global randperm for huge datasets
     sampler = None
     use_shuffle_flag = False
@@ -451,6 +464,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Do not synchronize CUDA around timing sections (lower overhead, less accurate)",
     )
+    parser.add_argument(
+        "--subsample_ratio",
+        type=float,
+        default=None,
+        help="Subsample ratio (0, 1] to use only first portion of dataset. None = use full dataset (default).",
+    )
     args = parser.parse_args()
 
     lens_map = None
@@ -510,4 +529,5 @@ if __name__ == "__main__":
         amp=(not args.no_amp),
         shuffle=args.shuffle,
         epoch_size=args.epoch_size,
+        subsample_ratio=args.subsample_ratio,
     )

@@ -73,6 +73,7 @@ def train_fusion(
     features_fp16: bool = False,
     advance_cls_head: bool = False,
     seed: Optional[int] = None,
+    subsample_ratio: Optional[float] = None,
 ):
     """Train fusion head for multi-teacher knowledge distillation.
     
@@ -93,6 +94,8 @@ def train_fusion(
         cached_features_path: Path to cached features (overrides dataset_root if provided)
         features_fp16: If True, cached features are in FP16 and will be converted to FP32
         seed: Random seed for reproducibility. If None, uses random seed and prints it.
+        subsample_ratio: If provided, use only first (subsample_ratio * dataset_size) samples for training. 
+                        Value should be in (0, 1]. None means use full dataset (default).
     """
     # Set random seed for reproducibility
     if seed is None:
@@ -119,6 +122,27 @@ def train_fusion(
         shard_shuffle=True,
         pin_memory=torch.cuda.is_available(),
     )
+    
+    # Apply subsample if requested (efficient: just take first N samples)
+    if subsample_ratio is not None:
+        if not (0 < subsample_ratio <= 1.0):
+            raise ValueError(f"subsample_ratio must be in (0, 1], got {subsample_ratio}")
+        original_size = len(ds)
+        subsample_size = max(1, int(original_size * subsample_ratio))
+        print(f"[Fusion] Subsampling dataset: {subsample_size}/{original_size} samples ({subsample_ratio*100:.1f}%)")
+        # Efficient subsampling: use Subset to take first N samples
+        from torch.utils.data import Subset
+        ds = Subset(ds, range(subsample_size))
+        # Rebuild dataloader with subsampled dataset
+        dl = DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=False,  # Already using shard shuffle logic if applicable
+            num_workers=0,
+            pin_memory=torch.cuda.is_available(),
+            collate_fn=dl.collate_fn if hasattr(dl, 'collate_fn') else None,
+        )
+    
     sample = ds[0]
     feat_dim = sample["student_feat"].shape[-1]
     
@@ -284,6 +308,8 @@ if __name__ == "__main__":
                         help="Use advanced classification head (attention pooling + MLP) for fusion head")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility. If not specified, uses random seed.")
+    parser.add_argument("--subsample_ratio", type=float, default=None,
+                        help="Subsample ratio (0, 1] to use only first portion of dataset. None = use full dataset (default).")
     
     args = parser.parse_args()
 
@@ -299,4 +325,5 @@ if __name__ == "__main__":
         features_fp16=args.features_fp16,
         advance_cls_head=args.advance_cls_head,
         seed=args.seed,
+        subsample_ratio=args.subsample_ratio,
     )
