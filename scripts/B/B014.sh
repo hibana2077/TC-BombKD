@@ -19,7 +19,7 @@ python3 -m polyspace.train.train_converter \
 	--features ./features/breakfast/features_breakfast_train.index.json \
 	--teachers videomaessv2 timesformerssv2 vivit \
 	--d_in 1408 --d_out 768 \
-	--kind c \
+	--kind a \
 	--epochs 10 \
 	--batch 8 \
 	--workers 1 \
