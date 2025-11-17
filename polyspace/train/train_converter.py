@@ -74,6 +74,7 @@ def train_converters(
     teacher_keys: List[str],
     d_in: int,
     d_out: int,
+    d_out_map: Optional[Dict[str, int]] = None,
     epochs: int = 10,
     batch_size: int = 128,
     lr: float = 1e-3,
@@ -131,6 +132,7 @@ def train_converters(
         collate_fn=_make_pad_collate(["x", *teacher_keys]),
     )
 
+    # Build converters; allow per-teacher output dimension overrides via d_out_map
     converters = nn.ModuleDict()
     for k in teacher_keys:
         kwargs = {}
@@ -138,7 +140,10 @@ def train_converters(
             kwargs["target_len"] = teacher_target_lens[k]
         if token_k is not None:
             kwargs["K"] = token_k
-        converters[k] = build_converter(kind, d_in, d_out, **kwargs)
+        ko = d_out_map[k] if (d_out_map is not None and k in d_out_map) else d_out
+        converters[k] = build_converter(kind, d_in, int(ko), **kwargs)
+        # Attach per-teacher output dim for downstream fusion modules
+        setattr(converters[k], "out_dim", int(ko))
     opt = torch.optim.AdamW(converters.parameters(), lr=lr)
 
     l2 = L2Loss()
@@ -351,7 +356,10 @@ def train_converters(
                 "state_dict": converters.state_dict(),
                 "keys": teacher_keys,
                 "d_in": d_in,
+                # Legacy single d_out retained for backward compatibility
                 "d_out": d_out,
+                # New per-teacher mapping (may be None)
+                "d_out_map": d_out_map,
                 "kind": kind,
                 "teacher_lens": teacher_target_lens,
                 "token_k": token_k,
@@ -380,6 +388,12 @@ if __name__ == "__main__":
     parser.add_argument("--teachers", type=str, nargs="+", required=True)
     parser.add_argument("--d_in", type=int, required=True)
     parser.add_argument("--d_out", type=int, required=True)
+    parser.add_argument(
+        "--d_out_map",
+        type=str,
+        default=None,
+        help="Optional per-teacher output dims, comma-separated k=dim pairs (e.g. vivit=768,videomaeg=1280). Overrides --d_out for listed teachers.",
+    )
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch", type=int, default=128)
     parser.add_argument("--workers", type=int, default=2)
@@ -455,11 +469,32 @@ if __name__ == "__main__":
         "l1": args.loss_l1,
     }
 
+    # Parse optional per-teacher d_out mapping
+    d_out_map = None
+    if args.d_out_map:
+        d_out_map = {}
+        for part in args.d_out_map.split(","):
+            if not part.strip():
+                continue
+            if "=" not in part:
+                raise SystemExit(f"Malformed d_out_map entry '{part}'. Use k=dim format.")
+            k, v = part.split("=", 1)
+            k = k.strip()
+            try:
+                d_out_map[k] = int(v)
+            except ValueError:
+                raise SystemExit(f"Invalid dimension value in d_out_map for '{k}': '{v}'")
+        # Sanity: ensure provided keys are subset of teacher list
+        extra = set(d_out_map.keys()) - set(args.teachers)
+        if extra:
+            raise SystemExit(f"d_out_map contains keys not in --teachers: {sorted(extra)}")
+
     train_converters(
         args.features,
         args.teachers,
         args.d_in,
         args.d_out,
+        d_out_map=d_out_map,
         epochs=args.epochs,
         batch_size=args.batch,
         workers=args.workers,

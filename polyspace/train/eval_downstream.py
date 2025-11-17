@@ -25,6 +25,7 @@ from .utils import FeaturePairs
 def load_converters(ckpt_path: str, keys: List[str]):
     ckpt = torch.load(ckpt_path, map_location="cpu")
     d_in, d_out = ckpt.get("d_in"), ckpt.get("d_out")
+    d_out_map = ckpt.get("d_out_map")  # may be None for legacy checkpoints
     kind = ckpt.get("kind", "b")
     teacher_lens = ckpt.get("teacher_lens", {}) or {}
     token_k = ckpt.get("token_k", None)
@@ -35,8 +36,9 @@ def load_converters(ckpt_path: str, keys: List[str]):
             kwargs["target_len"] = int(teacher_lens[k])
         if token_k is not None:
             kwargs["K"] = int(token_k)
-        mod = build_converter(kind, d_in, d_out, **kwargs)
-        setattr(mod, "out_dim", int(d_out) if d_out is not None else None)
+        ko = d_out_map.get(k) if (isinstance(d_out_map, dict) and k in d_out_map) else d_out
+        mod = build_converter(kind, d_in, ko, **kwargs)
+        setattr(mod, "out_dim", int(ko) if ko is not None else None)
         modules[k] = mod
     modules.load_state_dict(ckpt["state_dict"], strict=False)
     for p in modules.parameters():
