@@ -16,12 +16,12 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 python3 -m polyspace.train.train_converter \
-	--features ./features/features_hmdb51_train.index.json \
-	--teachers videomae timesformer vivit \
+	--features ./features/hmdb51/features_hmdb51_train.index.json \
+	--teachers vivit videomaeg timesformerg \
 	--d_in 1408 --d_out 768 \
 	--kind c \
 	--epochs 10 \
-	--batch 32 \
+	--batch 16 \
 	--workers 1 \
 	--log_every 20 \
 	--pin_memory \

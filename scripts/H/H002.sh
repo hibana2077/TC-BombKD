@@ -16,17 +16,12 @@ export HF_HUB_OFFLINE=1
 
 cd ../..
 python3 -m polyspace.train.train_fusion \
-    --dataset hmdb51 \
-    --root ./features/features_hmdb51_train.index.json \
-    --split train \
-    --student vjepa2 \
-    --teachers videomae timesformer vivit \
+    --features ./features/hmdb51/features_hmdb51_train.index.json \
+    --teachers vivit videomaeg timesformerg \
     --converters ./checkpoints/H001/converters_ep10.pt \
     --classes 51 \
-    --frames 16 \
     --batch 8 \
     --epochs 50 \
     --lr 3e-4 \
-    --use_cached_features \
     --features_fp16 \
     --save_dir ./checkpoints/H002 >> H002.log 2>&1
