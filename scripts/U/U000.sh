@@ -1,10 +1,10 @@
 #!/bin/bash
-#PBS -P rp06
-#PBS -q gpuvolta
+#PBS -P kf09
+#PBS -q dgxa100
 #PBS -l ngpus=1
-#PBS -l ncpus=12
-#PBS -l mem=24GB
-#PBS -l walltime=12:00:00
+#PBS -l ncpus=16
+#PBS -l mem=64GB
+#PBS -l walltime=48:00:00
 #PBS -l wd
 #PBS -l storage=scratch/rp06
 
@@ -21,13 +21,15 @@ python3 -m polyspace.data.featurize \
 	--dataset ucf101 \
 	--root ./datasets/UCF101 \
 	--split train \
-	--out ./features \
-	--student vjepa2 \
-	--teachers videomae timesformer vivit \
+	--out ./features/ucf101 \
+	--student vjepa2div \
+	--teachers vivit videomaeg timesformerg \
 	--batch 2 \
 	--workers 2 \
-	--frames 16 \
+	--student_frames 64 \
+	--teacher_frames 32 16 16 \
 	--shard_size 512 \
+	--storage npy_dir \
 	--fp16 \
 	--no_tqdm \
 	>> U000.log 2>&1
