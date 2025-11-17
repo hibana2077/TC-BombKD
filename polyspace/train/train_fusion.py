@@ -114,7 +114,7 @@ def train_fusion(
 
     # Feature-only dataloader
     print(f"[Fusion] Using cached features from: {features_path}")
-    dl, ds, _ = build_feature_dataloader(
+    dl, ds, original_sampler = build_feature_dataloader(
         features_path=features_path,
         teacher_keys=teacher_keys,
         batch_size=batch_size,
@@ -134,13 +134,15 @@ def train_fusion(
         from torch.utils.data import Subset
         ds = Subset(ds, range(subsample_size))
         # Rebuild dataloader with subsampled dataset
+        # Get collate_fn from original dataloader
+        original_collate_fn = dl.collate_fn if hasattr(dl, 'collate_fn') else None
         dl = DataLoader(
             ds,
             batch_size=batch_size,
-            shuffle=False,  # Already using shard shuffle logic if applicable
+            shuffle=False,  # Don't shuffle subsampled data
             num_workers=0,
             pin_memory=torch.cuda.is_available(),
-            collate_fn=dl.collate_fn if hasattr(dl, 'collate_fn') else None,
+            collate_fn=original_collate_fn,
         )
     
     sample = ds[0]

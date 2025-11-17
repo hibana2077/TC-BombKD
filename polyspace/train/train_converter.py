@@ -95,6 +95,9 @@ def train_converters(
     os.makedirs(save_dir, exist_ok=True)
     ds = FeaturePairs(features_path, teacher_keys)
     
+    # Check dataset mode before potential Subset wrapping
+    ds_mode = getattr(ds, '_mode', None)
+    
     # Apply subsample if requested (efficient: just take first N samples)
     original_size = len(ds)
     if subsample_ratio is not None:
@@ -113,7 +116,7 @@ def train_converters(
         sampler = None
         use_shuffle_flag = False
     elif shuffle.lower() in ("shard", "auto"):
-        if ds._mode == "index":
+        if ds_mode == "index":
             sampler = ShardAwareSampler(ds, within_shard_shuffle=True)
             use_shuffle_flag = False
             print("[Sampler] Using shard-aware shuffling (shuffles shard order and within-shard indices).")
