@@ -18,7 +18,7 @@ cd ../..
 python3 -m polyspace.train.train_converter \
 	--features ./features/hmdb51/features_hmdb51_train.index.json \
 	--teachers vivit videomaeg timesformerg \
-	--d_in 1408 --d_out 768 \
+	--d_in 1024 --d_out 768 \
 	--kind c \
 	--epochs 10 \
 	--batch 16 \
