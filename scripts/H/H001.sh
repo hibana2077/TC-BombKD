@@ -45,9 +45,9 @@ python3 -m polyspace.train.train_fusion \
     --save_dir ./checkpoints/H001/fusion >> H001.log 2>&1
 
 for ep in {1..50}; do
-  echo "checkpoint: ep$ep" >> H003.log 2>&1
+  echo "checkpoint: ep$ep" >> H001.log 2>&1
   python3 -m polyspace.train.eval_downstream \
-    --features ./features/features_hmdb51_test.index.json \
+    --features ./features/hmdb51/features_hmdb51_test.index.json \
     --teachers vivit videomaeg timesformerg \
     --converters ./checkpoints/H001/converter/converters_ep10.pt \
     --fusion ./checkpoints/H001/fusion/fusion_ep$ep.pt \
