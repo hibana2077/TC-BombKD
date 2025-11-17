@@ -21,7 +21,7 @@ python3 -m polyspace.train.train_converter \
 	--d_in 1408 --d_out 768 \
 	--kind b \
 	--epochs 10 \
-	--batch 32 \
+	--batch 8 \
 	--workers 1 \
 	--log_every 20 \
 	--pin_memory \
