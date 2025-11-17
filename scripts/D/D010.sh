@@ -39,12 +39,12 @@ python3 -m polyspace.train.train_fusion \
     --converters ./checkpoints/D010/converter/converters_ep10.pt \
     --classes 48 \
     --batch 8 \
-    --epochs 50 \
+    --epochs 15 \
     --lr 3e-4 \
     --features_fp16 \
     --save_dir ./checkpoints/D010/fusion >> D010.log 2>&1
 
-for ep in {1..50}; do
+for ep in {1..15}; do
   echo "checkpoint: ep$ep" >> D010E.log 2>&1
   python3 -m polyspace.train.eval_downstream \
     --features ./features/diving48/features_diving48_test.index.json \
