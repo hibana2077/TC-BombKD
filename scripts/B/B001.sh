@@ -33,23 +33,23 @@ python3 -m polyspace.train.train_converter \
 	--loss_l1 0.00 \
 	--save_dir ./checkpoints/B001/converter >> B001.log 2>&1
 
-# python3 -m polyspace.train.train_fusion \
-#     --features ./features/breakfast/features_breakfast_train.index.json \
-# 	--teachers videomaessv2 timesformerssv2 vivit \
-#     --converters ./checkpoints/B001/converter/converters_ep10.pt \
-#     --classes 10 \
-#     --batch 8 \
-#     --epochs 50 \
-#     --lr 3e-4 \
-#     --features_fp16 \
-#     --save_dir ./checkpoints/B001/head >> B001.log 2>&1
+python3 -m polyspace.train.train_fusion \
+    --features ./features/breakfast/features_breakfast_train.index.json \
+	--teachers videomaessv2 timesformerssv2 vivit \
+    --converters ./checkpoints/B001/converter/converters_ep10.pt \
+    --classes 10 \
+    --batch 8 \
+    --epochs 50 \
+    --lr 3e-4 \
+    --features_fp16 \
+    --save_dir ./checkpoints/B001/head >> B001.log 2>&1
 
-# for ep in {1..50}; do
-#   echo "checkpoint: ep$ep" >> B001.log 2>&1
-#   python3 -m polyspace.train.eval_downstream \
-#     --features ./features/breakfast/features_breakfast_test.index.json \
-#     --teachers videomaessv2 timesformerssv2 vivit \
-#     --converters ./checkpoints/B001/converter/converters_ep10.pt \
-#     --fusion ./checkpoints/B001/head/fusion_ep$ep.pt \
-#     --features_fp16 >> B001E.log 2>&1
-# done
+for ep in {1..50}; do
+  echo "checkpoint: ep$ep" >> B001.log 2>&1
+  python3 -m polyspace.train.eval_downstream \
+    --features ./features/breakfast/features_breakfast_test.index.json \
+    --teachers videomaessv2 timesformerssv2 vivit \
+    --converters ./checkpoints/B001/converter/converters_ep10.pt \
+    --fusion ./checkpoints/B001/head/fusion_ep$ep.pt \
+    --features_fp16 >> B001E.log 2>&1
+done
