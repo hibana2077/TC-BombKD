@@ -42,7 +42,7 @@ python3 -m polyspace.train.train_fusion \
     --epochs 50 \
     --lr 3e-4 \
     --features_fp16 \
-    --save_dir ./checkpoints/D004/head >> D004.log 2>&1
+    --save_dir ./checkpoints/D004/fusion >> D004.log 2>&1
 
 for ep in {1..50}; do
   echo "checkpoint: ep$ep" >> D004.log 2>&1
@@ -50,6 +50,6 @@ for ep in {1..50}; do
     --features ./features/diving48/features_diving48_test.index.json \
     --teachers videomaessv2 timesformerssv2 vivit \
     --converters ./checkpoints/D004/converter/converters_ep10.pt \
-    --fusion ./checkpoints/D004/head/fusion_ep$ep.pt \
+    --fusion ./checkpoints/D004/fusion/fusion_ep$ep.pt \
     --features_fp16 >> D004.log 2>&1
 done
