@@ -40,12 +40,12 @@ python3 -m polyspace.train.train_fusion \
 	--converters ./checkpoints/H016/converter/converters_ep10.pt \
 	--classes 51 \
 	--batch 8 \
-	--epochs 50 \
+	--epochs 40 \
 	--lr 3e-4 \
 	--features_fp16 \
 	--save_dir ./checkpoints/H016/fusion >> H016.log 2>&1
 
-for ep in {1..50}; do
+for ep in {1..40}; do
   echo "checkpoint: ep$ep" >> H016.log 2>&1
 	python3 -m polyspace.train.eval_downstream \
 		--features ./features/hmdb51/features_hmdb51_test.index.json \
