@@ -32,25 +32,27 @@ python3 -m polyspace.train.train_converter \
 	--loss_vic 0.0 \
 	--loss_bar 0.0 \
 	--loss_l1 0.0 \
-	--save_dir ./checkpoints/H008/converter >> H008.log 2>&1
+    --subsample_ratio 0.1 \
+	--save_dir ./checkpoints/HS001/converter >> HS001.log 2>&1
 
 python3 -m polyspace.train.train_fusion \
 	--features ./features/hmdb51/features_hmdb51_train.index.json \
 	--teachers vivit videomaeg timesformerg \
-	--converters ./checkpoints/H008/converter/converters_ep10.pt \
+	--converters ./checkpoints/HS001/converter/converters_ep10.pt \
 	--classes 51 \
 	--batch 8 \
 	--epochs 50 \
 	--lr 3e-4 \
 	--features_fp16 \
-	--save_dir ./checkpoints/H008/fusion >> H008.log 2>&1
+    --subsample_ratio 0.1 \
+	--save_dir ./checkpoints/HS001/fusion >> HS001.log 2>&1
 
 for ep in {1..50}; do
-  echo "checkpoint: ep$ep" >> H008.log 2>&1
+  echo "checkpoint: ep$ep" >> HS001.log 2>&1
 	python3 -m polyspace.train.eval_downstream \
 		--features ./features/hmdb51/features_hmdb51_test.index.json \
 		--teachers vivit videomaeg timesformerg \
-		--converters ./checkpoints/H008/converter/converters_ep10.pt \
-		--fusion ./checkpoints/H008/fusion/fusion_ep$ep.pt \
-		--features_fp16 >> H008E.log 2>&1
+		--converters ./checkpoints/HS001/converter/converters_ep10.pt \
+		--fusion ./checkpoints/HS001/fusion/fusion_ep$ep.pt \
+		--features_fp16 >> HS001E.log 2>&1
 done
