@@ -22,7 +22,7 @@ python3 -m polyspace.train.train_converter \
 	--d_out_map "vivit=768,videomaeg=1280,timesformerg=768" \
 	--kind b \
 	--epochs 10 \
-	--batch 8 \
+	--batch 4 \
 	--workers 1 \
 	--log_every 20 \
 	--pin_memory \
@@ -40,7 +40,7 @@ python3 -m polyspace.train.train_fusion \
 	--teachers vivit videomaeg timesformerg \
 	--converters ./checkpoints/HS001/converter/converters_ep10.pt \
 	--classes 51 \
-	--batch 8 \
+	--batch 4 \
 	--epochs 50 \
 	--lr 3e-4 \
 	--features_fp16 \
