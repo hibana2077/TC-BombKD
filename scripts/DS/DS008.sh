@@ -19,7 +19,7 @@ python3 -m polyspace.train.train_converter \
 	--features ./features/diving48/features_diving48_train.index.json \
 	--teachers videomaessv2 timesformerssv2 vivit \
 	--d_in 1408 --d_out 768 \
-	--kind a-adv \
+	--kind a \
 	--epochs 10 \
 	--batch 16 \
 	--workers 1 \
@@ -31,7 +31,7 @@ python3 -m polyspace.train.train_converter \
 	--loss_vic 0.0 \
 	--loss_bar 0.0 \
 	--loss_l1 0.0 \
-  --subsample_ratio 0.1 \
+    --subsample_ratio 0.1 \
 	--save_dir ./checkpoints/DS008/converter >> DS008.log 2>&1
 
 python3 -m polyspace.train.train_fusion \
@@ -44,6 +44,7 @@ python3 -m polyspace.train.train_fusion \
     --lr 3e-4 \
     --features_fp16 \
     --subsample_ratio 0.1 \
+    --advance-cls-head \
     --save_dir ./checkpoints/DS008/fusion >> DS008.log 2>&1
 
 for ep in {1..50}; do
@@ -53,5 +54,6 @@ for ep in {1..50}; do
     --teachers videomaessv2 timesformerssv2 vivit \
     --converters ./checkpoints/DS008/converter/converters_ep10.pt \
     --fusion ./checkpoints/DS008/fusion/fusion_ep$ep.pt \
+    --advance-cls-head \
     --features_fp16 >> DS008E.log 2>&1
 done
